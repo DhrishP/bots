@@ -299,45 +299,6 @@ async function handleTelegramUpdate(
     }
   }
 
-  // Handle adding tasks (with or without /add)
-  let taskText = text;
-  if (text.startsWith("/add ")) {
-    taskText = text.substring(5);
-  }
-
-  try {
-    // Get the highest task_order
-    const maxOrder = await env.DB.prepare(
-      "SELECT COALESCE(MAX(task_order), 0) as max_order FROM todos WHERE chat_id = ? AND user_id = ?"
-    )
-      .bind(chatId.toString(), userId)
-      .first();
-
-    const nextOrder = ((maxOrder?.max_order as number) || 0) + 1;
-
-    await env.DB.prepare(
-      "INSERT INTO todos (chat_id, user_id, task, is_done, task_order) VALUES (?, ?, ?, FALSE, ?)"
-    )
-      .bind(chatId.toString(), userId, taskText, nextOrder)
-      .run();
-
-    await sendTelegramMessage(
-      chatId,
-      `✅ Added task #${nextOrder}: "${taskText}"`,
-      env,
-      5000,
-      ctx
-    );
-  } catch (error) {
-    await sendTelegramMessage(
-      chatId,
-      "❌ Failed to add the task.",
-      env,
-      5000,
-      ctx
-    );
-  }
-
   // New /reorder command
   if (text === "/reorder") {
     try {
@@ -381,7 +342,6 @@ async function handleTelegramUpdate(
     return;
   }
 
-  // Updated help command
   if (text === "/help") {
     const helpText = `📝 Available commands:
 /start - 🎉 Initialize the bot
@@ -401,14 +361,72 @@ Buy groceries
     return;
   }
 
-  //   // If no command matches, show help message
-  //   await sendTelegramMessage(
-  //     chatId,
-  //     "❓ Unknown command. Use /help to see available commands.",
-  //     env,
-  //     5000,
-  //     ctx
-  //   );
+  if (text === "/deleteall") {
+    try {
+      // Delete only pending tasks for this user
+      await env.DB.prepare(
+        "DELETE FROM todos WHERE chat_id = ? AND user_id = ? AND is_done = FALSE"
+      )
+        .bind(chatId.toString(), userId)
+        .run();
+
+      await sendTelegramMessage(
+        chatId,
+        "🧹 All your pending tasks in this chat have been deleted! Completed tasks remain in /small-wins.",
+        env,
+        5000,
+        ctx
+      );
+    } catch (error) {
+      await sendTelegramMessage(
+        chatId,
+        "❌ Failed to delete pending tasks.",
+        env,
+        5000,
+        ctx
+      );
+    }
+    return;
+  }
+
+  // Handle adding tasks (with or without /add)
+  let taskText = text;
+  if (text.startsWith("/add ")) {
+    taskText = text.substring(5);
+  }
+
+  try {
+    // Get the highest task_order
+    const maxOrder = await env.DB.prepare(
+      "SELECT COALESCE(MAX(task_order), 0) as max_order FROM todos WHERE chat_id = ? AND user_id = ?"
+    )
+      .bind(chatId.toString(), userId)
+      .first();
+
+    const nextOrder = ((maxOrder?.max_order as number) || 0) + 1;
+
+    await env.DB.prepare(
+      "INSERT INTO todos (chat_id, user_id, task, is_done, task_order) VALUES (?, ?, ?, FALSE, ?)"
+    )
+      .bind(chatId.toString(), userId, taskText, nextOrder)
+      .run();
+
+    await sendTelegramMessage(
+      chatId,
+      `✅ Added task #${nextOrder}: "${taskText}"`,
+      env,
+      5000,
+      ctx
+    );
+  } catch (error) {
+    await sendTelegramMessage(
+      chatId,
+      "❌ Failed to add the task.",
+      env,
+      5000,
+      ctx
+    );
+  }
 }
 
 router.post(

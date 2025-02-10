@@ -93,7 +93,19 @@ async function handleTelegramUpdate(
   const userId = message.from.id;
   const text = message.text.trim();
 
-  // Handle /done command
+  // Handle /start command
+  if (text === "/start") {
+    await sendTelegramMessage(
+      chatId,
+      `👋 Welcome to todo Asap! Any text you add will become a task.\n\nUse /help to see available commands.`,
+      env,
+      0,
+      ctx
+    );
+    return;
+  }
+
+  // Handle /done command (updated task_order)
   if (text.startsWith("/done ")) {
     const taskNumber = parseInt(text.split(" ")[1]);
     try {
@@ -115,7 +127,10 @@ async function handleTelegramUpdate(
       }
 
       await env.DB.prepare(
-        "UPDATE todos SET is_done = TRUE WHERE chat_id = ? AND user_id = ? AND task_order = ?"
+        `UPDATE todos 
+         SET is_done = TRUE, 
+             task_order = 5000 + task_order 
+         WHERE chat_id = ? AND user_id = ? AND task_order = ?`
       )
         .bind(chatId.toString(), userId, taskNumber)
         .run();
@@ -323,22 +338,65 @@ async function handleTelegramUpdate(
     );
   }
 
-  // Update help command
+  // New /reorder command
+  if (text === "/reorder") {
+    try {
+      // Transaction for atomic updates
+      await env.DB.batch([
+        // Get current pending tasks in order
+        env.DB.prepare(
+          "SELECT task_order FROM todos WHERE chat_id = ? AND user_id = ? AND is_done = FALSE ORDER BY task_order"
+        ).bind(chatId.toString(), userId),
+
+        // Update task_order sequentially
+        env.DB.prepare(
+          `WITH sorted AS (
+            SELECT id, ROW_NUMBER() OVER (ORDER BY task_order) as new_order
+            FROM todos 
+            WHERE chat_id = ? AND user_id = ? AND is_done = FALSE
+          )
+          UPDATE todos
+          SET task_order = sorted.new_order
+          FROM sorted
+          WHERE todos.id = sorted.id`
+        ).bind(chatId.toString(), userId),
+      ]);
+
+      await sendTelegramMessage(
+        chatId,
+        "🔢 Task order has been reorganized! Use /list to see the new order.",
+        env,
+        5000,
+        ctx
+      );
+    } catch (error) {
+      await sendTelegramMessage(
+        chatId,
+        "❌ Failed to reorganize tasks.",
+        env,
+        5000,
+        ctx
+      );
+    }
+    return;
+  }
+
+  // Updated help command
   if (text === "/help") {
     const helpText = `📝 Available commands:
-Just type your task or use /add <task> - Add a new task
-/done <number> - ✅ Mark a task as completed
+/start - 🎉 Initialize the bot
+/add <task> - ➕ Add a new task
+/done <number> - ✅ Mark task as completed
 /list - 📋 Show pending tasks
 /small-wins - 🎉 Show completed tasks
 /delete <number> - 🗑️ Delete a task
-/help - ℹ️ Show this help message
+/reorder - 🔄 Fix task numbering gaps
+/help - ℹ️ Show this help
 
 📱 Examples:
 Buy groceries
-/add Buy groceries
 /done 1
-/delete 1`;
-
+/reorder`;
     await sendTelegramMessage(chatId, helpText, env, 5000, ctx);
     return;
   }

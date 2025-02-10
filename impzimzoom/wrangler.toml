@@ -1,8 +1,10 @@
 name = "impzimzoom"
 main = "src/index.ts"
 compatibility_date = "2024-03-01"
-
-
-# Use the newer nodejs_compat flag for better Node.js compatibility
 compatibility_flags = ["nodejs_compat"]
+
+[[d1_databases]]
+binding = "DB"
+database_name = "impzimzoom"
+database_id = "533101dd-48f7-41f9-bd37-dbe058ed1a2b"
 

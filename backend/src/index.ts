@@ -42,98 +42,110 @@ async function handleTelegramUpdate(update: TelegramUpdate, env: Env) {
   const chatId = message.chat.id;
   const text = message.text.trim();
 
-  const addMatch = text.match(/^\/add (.+)/);
-  if (addMatch) {
-    const task = addMatch[1];
+  // Handle /done command
+  if (text.startsWith("/done ")) {
+    const taskNumber = parseInt(text.split(" ")[1]);
     try {
-      // First get the highest task_order for this chat_id
-      const maxOrder = await env.DB.prepare(
-        "SELECT COALESCE(MAX(task_order), 0) as max_order FROM todos WHERE chat_id = ?"
+      const task = await env.DB.prepare(
+        "SELECT * FROM todos WHERE chat_id = ? AND task_order = ?"
       )
-        .bind(chatId.toString())
+        .bind(chatId.toString(), taskNumber)
         .first();
 
-      const nextOrder = ((maxOrder?.max_order as number) || 0) + 1;
+      if (!task) {
+        await sendTelegramMessage(chatId, "❌ Invalid task number.", env);
+        return;
+      }
 
       await env.DB.prepare(
-        "INSERT INTO todos (chat_id, task, status, task_order) VALUES (?, ?, ?, ?)"
+        "UPDATE todos SET is_done = TRUE WHERE chat_id = ? AND task_order = ?"
       )
-        .bind(chatId.toString(), task, "not started", nextOrder)
+        .bind(chatId.toString(), taskNumber)
         .run();
 
       await sendTelegramMessage(
         chatId,
-        `✅ Added: "${task}" (#${nextOrder})`,
+        `✅ Completed task #${taskNumber}: "${task.task}"`,
         env
       );
+      return;
     } catch (error) {
-      await sendTelegramMessage(chatId, "❌ Failed to add the task.", env);
+      await sendTelegramMessage(chatId, "❌ Failed to mark task as done.", env);
+      return;
     }
-    return;
   }
 
-  // Enhanced /list command with status filtering
-  if (text.startsWith("/list")) {
+  // Handle /small-wins command
+  if (text === "/small-wins") {
     try {
-      let query = "SELECT * FROM todos WHERE chat_id = ? ORDER BY task_order";
-      let params = [chatId.toString()];
+      const wins = await env.DB.prepare(
+        "SELECT * FROM todos WHERE chat_id = ? AND is_done = TRUE ORDER BY created_at DESC"
+      )
+        .bind(chatId.toString())
+        .all();
 
-      // Check for status filter
-      const statusMatch = text.match(/^\/list (.+)/);
-      if (statusMatch) {
-        const status = statusMatch[1].toLowerCase();
-        const validStatuses = ["not started", "in progress", "completed"];
-        if (validStatuses.includes(status)) {
-          query =
-            "SELECT * FROM todos WHERE chat_id = ? AND status = ? ORDER BY task_order";
-          params.push(status);
-        } else {
-          await sendTelegramMessage(
-            chatId,
-            `❌ Invalid status. Please use one of: ${validStatuses.join(", ")}`,
-            env
-          );
-          return;
-        }
+      if (!wins.results?.length) {
+        await sendTelegramMessage(
+          chatId,
+          "📭 No completed tasks yet. Keep going!",
+          env
+        );
+        return;
       }
 
-      const todos = await env.DB.prepare(query)
-        .bind(...params)
+      const winsList = wins.results
+        .map((todo: any) => `• ${todo.task}`)
+        .join("\n");
+
+      await sendTelegramMessage(
+        chatId,
+        `🎉 Your completed tasks:\n${winsList}`,
+        env
+      );
+      return;
+    } catch (error) {
+      await sendTelegramMessage(
+        chatId,
+        "❌ Failed to fetch completed tasks.",
+        env
+      );
+      return;
+    }
+  }
+
+  // Handle /list command
+  if (text === "/list") {
+    try {
+      const todos = await env.DB.prepare(
+        "SELECT * FROM todos WHERE chat_id = ? AND is_done = FALSE ORDER BY task_order"
+      )
+        .bind(chatId.toString())
         .all();
 
       if (!todos.results?.length) {
-        const message = statusMatch
-          ? `📭 No tasks found with status "${statusMatch[1]}". Use /add to create a new task.`
-          : "📭 No tasks found. Use /add to create a new task.";
-        await sendTelegramMessage(chatId, message, env);
+        await sendTelegramMessage(
+          chatId,
+          "📭 No pending tasks. Add some tasks!",
+          env
+        );
         return;
       }
 
       const taskList = todos.results
-        .map(
-          (todo: any, index: number) =>
-            `${index + 1}. ${todo.task} - ${todo.status}`
-        )
+        .map((todo: any) => `${todo.task_order}. ${todo.task}`)
         .join("\n");
 
-      const statusText = statusMatch ? ` (${statusMatch[1]})` : "";
-      await sendTelegramMessage(
-        chatId,
-        `📋 Your tasks${statusText}:\n${taskList}`,
-        env
-      );
+      await sendTelegramMessage(chatId, `📋 Your tasks:\n${taskList}`, env);
+      return;
     } catch (error) {
       await sendTelegramMessage(chatId, "❌ Failed to fetch tasks.", env);
+      return;
     }
-    return;
   }
 
-  // Edit task command: /edit <task_number> <new_text>
-  const editMatch = text.match(/^\/edit (\d+) (.+)/);
-  if (editMatch) {
-    const taskNumber = parseInt(editMatch[1]);
-    const newTask = editMatch[2];
-
+  // Handle /delete command
+  if (text.startsWith("/delete ")) {
+    const taskNumber = parseInt(text.split(" ")[1]);
     try {
       const task = await env.DB.prepare(
         "SELECT * FROM todos WHERE chat_id = ? AND task_order = ?"
@@ -146,42 +158,6 @@ async function handleTelegramUpdate(update: TelegramUpdate, env: Env) {
         return;
       }
 
-      await env.DB.prepare(
-        "UPDATE todos SET task = ? WHERE chat_id = ? AND task_order = ?"
-      )
-        .bind(newTask, chatId.toString(), taskNumber)
-        .run();
-
-      await sendTelegramMessage(
-        chatId,
-        `✅ Task #${taskNumber} updated to: "${newTask}"`,
-        env
-      );
-    } catch (error) {
-      await sendTelegramMessage(chatId, "❌ Failed to edit the task.", env);
-    }
-    return;
-  }
-
-  // Delete task command: /delete <task_number>
-  const deleteMatch = text.match(/^\/delete (\d+)/);
-  if (deleteMatch) {
-    const taskNumber = parseInt(deleteMatch[1]);
-
-    try {
-      // First check if task exists
-      const task = await env.DB.prepare(
-        "SELECT * FROM todos WHERE chat_id = ? AND task_order = ?"
-      )
-        .bind(chatId.toString(), taskNumber)
-        .first();
-
-      if (!task) {
-        await sendTelegramMessage(chatId, "❌ Invalid task number.", env);
-        return;
-      }
-
-      // Delete the task
       await env.DB.prepare(
         "DELETE FROM todos WHERE chat_id = ? AND task_order = ?"
       )
@@ -190,96 +166,70 @@ async function handleTelegramUpdate(update: TelegramUpdate, env: Env) {
 
       // Reorder remaining tasks
       await env.DB.prepare(
-        `
-        UPDATE todos 
-        SET task_order = task_order - 1 
-        WHERE chat_id = ? AND task_order > ?
-      `
+        `UPDATE todos 
+         SET task_order = task_order - 1 
+         WHERE chat_id = ? AND task_order > ?`
       )
         .bind(chatId.toString(), taskNumber)
         .run();
 
-      await sendTelegramMessage(chatId, `🗑️ Task #${taskNumber} deleted.`, env);
-    } catch (error) {
-      await sendTelegramMessage(chatId, "❌ Failed to delete the task.", env);
-    }
-    return;
-  }
-
-  // Change task status command: /status <task_number> <new_status>
-  const statusMatch = text.match(/^\/status (\d+) (.+)/);
-  if (statusMatch) {
-    const taskNumber = parseInt(statusMatch[1]);
-    const newStatus = statusMatch[2].toLowerCase();
-
-    // Validate status
-    const validStatuses = ["not started", "in progress", "completed"];
-    if (!validStatuses.includes(newStatus)) {
       await sendTelegramMessage(
         chatId,
-        `❌ Invalid status. Please use one of: ${validStatuses.join(", ")}`,
+        `🗑️ Deleted task #${taskNumber}: "${task.task}"`,
         env
       );
       return;
-    }
-
-    try {
-      // Get task by task_order
-      const task = await env.DB.prepare(
-        "SELECT * FROM todos WHERE chat_id = ? AND task_order = ?"
-      )
-        .bind(chatId.toString(), taskNumber)
-        .first();
-
-      if (!task) {
-        await sendTelegramMessage(chatId, "❌ Invalid task number.", env);
-        return;
-      }
-
-      // Update the status
-      const result = await env.DB.prepare(
-        "UPDATE todos SET status = ? WHERE chat_id = ? AND task_order = ?"
-      )
-        .bind(newStatus, chatId.toString(), taskNumber)
-        .run();
-
-      if (result.success) {
-        await sendTelegramMessage(
-          chatId,
-          `✅ Task "${task.task}" (#${taskNumber}) status updated to: ${newStatus}`,
-          env
-        );
-      } else {
-        throw new Error("Update operation failed");
-      }
     } catch (error) {
-      console.error("Status update error:", error);
-      await sendTelegramMessage(
-        chatId,
-        "❌ Failed to update task status. Please try again.",
-        env
-      );
+      await sendTelegramMessage(chatId, "❌ Failed to delete task.", env);
+      return;
     }
-    return;
   }
 
-  // Help command with updated information
+  // Handle adding tasks (with or without /add)
+  let taskText = text;
+  if (text.startsWith("/add ")) {
+    taskText = text.substring(5);
+  }
+
+  try {
+    // Get the highest task_order
+    const maxOrder = await env.DB.prepare(
+      "SELECT COALESCE(MAX(task_order), 0) as max_order FROM todos WHERE chat_id = ?"
+    )
+      .bind(chatId.toString())
+      .first();
+
+    const nextOrder = ((maxOrder?.max_order as number) || 0) + 1;
+
+    await env.DB.prepare(
+      "INSERT INTO todos (chat_id, task, is_done, task_order) VALUES (?, ?, FALSE, ?)"
+    )
+      .bind(chatId.toString(), taskText, nextOrder)
+      .run();
+
+    await sendTelegramMessage(
+      chatId,
+      `✅ Added task #${nextOrder}: "${taskText}"`,
+      env
+    );
+  } catch (error) {
+    await sendTelegramMessage(chatId, "❌ Failed to add the task.", env);
+  }
+
+  // Update help command
   if (text === "/help") {
     const helpText = `📝 Available commands:
-/add <task> - ➕ Add a new task
-/list - 📋 Show all tasks
-/list <status> - 🔍 Show tasks with specific status (not started/in progress/completed)
-/edit <number> <new_text> - ✏️ Edit a task
+Just type your task or use /add <task> - Add a new task
+/done <number> - ✅ Mark a task as completed
+/list - 📋 Show pending tasks
+/small-wins - 🎉 Show completed tasks
 /delete <number> - 🗑️ Delete a task
-/status <number> <status> - 🔄 Update task status (not started/in progress/completed)
 /help - ℹ️ Show this help message
 
 📱 Examples:
+Buy groceries
 /add Buy groceries
-/list
-/list in progress
-/edit 1 Buy groceries and milk
-/status 1 completed
+/done 1
 /delete 1`;
 
     await sendTelegramMessage(chatId, helpText, env);

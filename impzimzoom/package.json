@@ -1,5 +1,5 @@
 {
-  "name": "teleasap",
+  "name": "impzimzoom",
   "module": "src/index.ts",
   "type": "module",
   "scripts": {
@@ -8,9 +8,8 @@
     "start": "wrangler dev"
   },
   "devDependencies": {
-    "@types/bun": "latest",
-    "wrangler": "^3.107.3"
-  }, 
+    "@types/bun": "latest"
+  },
   "peerDependencies": {
     "typescript": "^5.0.0"
   },
@@ -18,10 +17,8 @@
     "@cloudflare/workers-types": "^4.20250204.0",
     "@types/express": "^5.0.0",
     "@types/node-telegram-bot-api": "^0.64.7",
-    "crypto": "^1.0.1",
     "express": "^4.21.2",
     "itty-router": "^5.0.18",
-    "node-telegram-bot-api": "^0.66.0",
-    "telegram-bot-api": "^2.0.1"
+    "node-telegram-bot-api": "^0.66.0"
   }
 }

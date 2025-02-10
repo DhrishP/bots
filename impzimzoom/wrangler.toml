@@ -1,0 +1,8 @@
+name = "impzimzoom"
+main = "src/index.ts"
+compatibility_date = "2024-03-01"
+
+
+# Use the newer nodejs_compat flag for better Node.js compatibility
+compatibility_flags = ["nodejs_compat"]
+

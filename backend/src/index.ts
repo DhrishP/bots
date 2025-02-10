@@ -155,8 +155,7 @@ async function handleTelegramUpdate(
     }
   }
 
-  // Handle /small-wins command
-  if (text === "/small-wins") {
+  if (text === "/smallwins") {
     try {
       const wins = await env.DB.prepare(
         "SELECT * FROM todos WHERE chat_id = ? AND user_id = ? AND is_done = TRUE ORDER BY created_at DESC"
@@ -348,9 +347,10 @@ async function handleTelegramUpdate(
 /add <task> - ➕ Add a new task
 /done <number> - ✅ Mark task as completed
 /list - 📋 Show pending tasks
-/small-wins - 🎉 Show completed tasks
+/smallwins - 🎉 Show completed tasks
 /delete <number> - 🗑️ Delete a task
 /reorder - 🔄 Fix task numbering gaps
+/dall - 🧹 Delete all pending tasks
 /help - ℹ️ Show this help
 
 📱 Examples:
@@ -361,7 +361,7 @@ Buy groceries
     return;
   }
 
-  if (text === "/deleteall") {
+  if (text === "/dall") {
     try {
       // Delete only pending tasks for this user
       await env.DB.prepare(
@@ -372,7 +372,7 @@ Buy groceries
 
       await sendTelegramMessage(
         chatId,
-        "🧹 All your pending tasks in this chat have been deleted! Completed tasks remain in /small-wins.",
+        "🧹 All your pending tasks in this chat have been deleted! Completed tasks remain in /smallwins.",
         env,
         5000,
         ctx

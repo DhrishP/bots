@@ -8,8 +8,8 @@ compatibility_flags = ["nodejs_compat"]
 # Configure your database
 [[d1_databases]]
 binding = "DB"
-database_name = "todo_bot_db"
-database_id = "ac901829-e3fe-4404-8aec-686978ee335a"
+database_name = "todo_tele_bot"
+database_id = "42339472-ce91-4a72-9d49-81a244fa05e0"
 
 
 

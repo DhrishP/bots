@@ -1,0 +1,17 @@
+name = "todo-tele-bot"
+main = "src/index.ts"
+compatibility_date = "2024-03-01"
+
+# Use the newer nodejs_compat flag for better Node.js compatibility
+compatibility_flags = ["nodejs_compat"]
+
+# Configure your database
+[[d1_databases]]
+binding = "DB"
+database_name = "todo_bot_db"
+database_id = "ac901829-e3fe-4404-8aec-686978ee335a"
+
+
+
+
+

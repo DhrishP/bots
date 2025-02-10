@@ -2,19 +2,25 @@
   "name": "teleasap",
   "module": "src/index.ts",
   "type": "module",
+  "scripts": {
+    "deploy": "wrangler deploy",
+    "dev": "wrangler dev",
+    "start": "wrangler dev"
+  },
   "devDependencies": {
     "@types/bun": "latest",
-    "prisma": "^6.3.1"
+    "wrangler": "^3.107.3"
   },
   "peerDependencies": {
     "typescript": "^5.0.0"
   },
   "dependencies": {
-    "@prisma/client": "^6.3.1",
+    "@cloudflare/workers-types": "^4.20250204.0",
     "@types/express": "^5.0.0",
     "@types/node-telegram-bot-api": "^0.64.7",
-    "dotenv": "^16.4.7",
+    "crypto": "^1.0.1",
     "express": "^4.21.2",
+    "itty-router": "^5.0.18",
     "node-telegram-bot-api": "^0.66.0",
     "telegram-bot-api": "^2.0.1"
   }

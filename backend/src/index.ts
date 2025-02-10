@@ -11,15 +11,31 @@ interface TelegramUpdate {
     chat: {
       id: number;
     };
+    from?: {
+      id: number;
+    };
     text?: string;
+  };
+}
+
+interface TelegramResponse {
+  ok: boolean;
+  result: {
+    message_id: number;
   };
 }
 
 const router = Router();
 
 // Helper function to send Telegram messages
-async function sendTelegramMessage(chatId: number, text: string, env: Env) {
-  await fetch(
+async function sendTelegramMessage(
+  chatId: number,
+  text: string,
+  env: Env,
+  deleteAfter: number = 0,
+  ctx: ExecutionContext
+) {
+  const response = await fetch(
     `https://api.telegram.org/bot${env.TELEGRAM_BOT_TOKEN}/sendMessage`,
     {
       method: "POST",
@@ -32,14 +48,49 @@ async function sendTelegramMessage(chatId: number, text: string, env: Env) {
       }),
     }
   );
+
+  const result = (await response.json()) as TelegramResponse;
+  if (result.ok && deleteAfter > 0) {
+    // Schedule message deletion using waitUntil
+    ctx.waitUntil(
+      new Promise<void>((resolve) => {
+        setTimeout(async () => {
+          await deleteMessage(chatId, result.result.message_id, env);
+          resolve();
+        }, deleteAfter);
+      })
+    );
+  }
+}
+
+// New helper function to delete messages
+async function deleteMessage(chatId: number, messageId: number, env: Env) {
+  await fetch(
+    `https://api.telegram.org/bot${env.TELEGRAM_BOT_TOKEN}/deleteMessage`,
+    {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        chat_id: chatId,
+        message_id: messageId,
+      }),
+    }
+  );
 }
 
 // Handle Telegram webhook updates
-async function handleTelegramUpdate(update: TelegramUpdate, env: Env) {
+async function handleTelegramUpdate(
+  update: TelegramUpdate,
+  env: Env,
+  ctx: ExecutionContext
+) {
   const message = update.message;
-  if (!message?.text || !message.chat) return;
+  if (!message?.text || !message.chat || !message.from) return;
 
   const chatId = message.chat.id;
+  const userId = message.from.id;
   const text = message.text.trim();
 
   // Handle /done command
@@ -47,30 +98,44 @@ async function handleTelegramUpdate(update: TelegramUpdate, env: Env) {
     const taskNumber = parseInt(text.split(" ")[1]);
     try {
       const task = await env.DB.prepare(
-        "SELECT * FROM todos WHERE chat_id = ? AND task_order = ?"
+        "SELECT * FROM todos WHERE chat_id = ? AND user_id = ? AND task_order = ?"
       )
-        .bind(chatId.toString(), taskNumber)
+        .bind(chatId.toString(), userId, taskNumber)
         .first();
 
       if (!task) {
-        await sendTelegramMessage(chatId, "❌ Invalid task number.", env);
+        await sendTelegramMessage(
+          chatId,
+          "❌ Invalid task number.",
+          env,
+          5000,
+          ctx
+        );
         return;
       }
 
       await env.DB.prepare(
-        "UPDATE todos SET is_done = TRUE WHERE chat_id = ? AND task_order = ?"
+        "UPDATE todos SET is_done = TRUE WHERE chat_id = ? AND user_id = ? AND task_order = ?"
       )
-        .bind(chatId.toString(), taskNumber)
+        .bind(chatId.toString(), userId, taskNumber)
         .run();
 
       await sendTelegramMessage(
         chatId,
         `✅ Completed task #${taskNumber}: "${task.task}"`,
-        env
+        env,
+        5000,
+        ctx
       );
       return;
     } catch (error) {
-      await sendTelegramMessage(chatId, "❌ Failed to mark task as done.", env);
+      await sendTelegramMessage(
+        chatId,
+        "❌ Failed to mark task as done.",
+        env,
+        5000,
+        ctx
+      );
       return;
     }
   }
@@ -79,16 +144,18 @@ async function handleTelegramUpdate(update: TelegramUpdate, env: Env) {
   if (text === "/small-wins") {
     try {
       const wins = await env.DB.prepare(
-        "SELECT * FROM todos WHERE chat_id = ? AND is_done = TRUE ORDER BY created_at DESC"
+        "SELECT * FROM todos WHERE chat_id = ? AND user_id = ? AND is_done = TRUE ORDER BY created_at DESC"
       )
-        .bind(chatId.toString())
+        .bind(chatId.toString(), userId)
         .all();
 
       if (!wins.results?.length) {
         await sendTelegramMessage(
           chatId,
           "📭 No completed tasks yet. Keep going!",
-          env
+          env,
+          5000,
+          ctx
         );
         return;
       }
@@ -100,14 +167,18 @@ async function handleTelegramUpdate(update: TelegramUpdate, env: Env) {
       await sendTelegramMessage(
         chatId,
         `🎉 Your completed tasks:\n${winsList}`,
-        env
+        env,
+        5000,
+        ctx
       );
       return;
     } catch (error) {
       await sendTelegramMessage(
         chatId,
         "❌ Failed to fetch completed tasks.",
-        env
+        env,
+        5000,
+        ctx
       );
       return;
     }
@@ -117,16 +188,18 @@ async function handleTelegramUpdate(update: TelegramUpdate, env: Env) {
   if (text === "/list") {
     try {
       const todos = await env.DB.prepare(
-        "SELECT * FROM todos WHERE chat_id = ? AND is_done = FALSE ORDER BY task_order"
+        "SELECT * FROM todos WHERE chat_id = ? AND user_id = ? AND is_done = FALSE ORDER BY task_order"
       )
-        .bind(chatId.toString())
+        .bind(chatId.toString(), userId)
         .all();
 
       if (!todos.results?.length) {
         await sendTelegramMessage(
           chatId,
           "📭 No pending tasks. Add some tasks!",
-          env
+          env,
+          5000,
+          ctx
         );
         return;
       }
@@ -135,52 +208,78 @@ async function handleTelegramUpdate(update: TelegramUpdate, env: Env) {
         .map((todo: any) => `${todo.task_order}. ${todo.task}`)
         .join("\n");
 
-      await sendTelegramMessage(chatId, `📋 Your tasks:\n${taskList}`, env);
+      await sendTelegramMessage(
+        chatId,
+        `📋 Your tasks:\n${taskList}`,
+        env,
+        5000,
+        ctx
+      );
       return;
     } catch (error) {
-      await sendTelegramMessage(chatId, "❌ Failed to fetch tasks.", env);
+      await sendTelegramMessage(
+        chatId,
+        "❌ Failed to fetch tasks.",
+        env,
+        5000,
+        ctx
+      );
       return;
     }
   }
 
   // Handle /delete command
-  if (text.startsWith("/delete ")) {
+  if (text.startsWith("/delete")) {
     const taskNumber = parseInt(text.split(" ")[1]);
     try {
       const task = await env.DB.prepare(
-        "SELECT * FROM todos WHERE chat_id = ? AND task_order = ?"
+        "SELECT * FROM todos WHERE chat_id = ? AND user_id = ? AND task_order = ?"
       )
-        .bind(chatId.toString(), taskNumber)
+        .bind(chatId.toString(), userId, taskNumber)
         .first();
 
       if (!task) {
-        await sendTelegramMessage(chatId, "❌ Invalid task number.", env);
+        await sendTelegramMessage(
+          chatId,
+          "❌ Invalid task number.",
+          env,
+          5000,
+          ctx
+        );
         return;
       }
 
       await env.DB.prepare(
-        "DELETE FROM todos WHERE chat_id = ? AND task_order = ?"
+        "DELETE FROM todos WHERE chat_id = ? AND user_id = ? AND task_order = ?"
       )
-        .bind(chatId.toString(), taskNumber)
+        .bind(chatId.toString(), userId, taskNumber)
         .run();
 
       // Reorder remaining tasks
       await env.DB.prepare(
         `UPDATE todos 
          SET task_order = task_order - 1 
-         WHERE chat_id = ? AND task_order > ?`
+         WHERE chat_id = ? AND user_id = ? AND task_order > ?`
       )
-        .bind(chatId.toString(), taskNumber)
+        .bind(chatId.toString(), userId, taskNumber)
         .run();
 
       await sendTelegramMessage(
         chatId,
         `🗑️ Deleted task #${taskNumber}: "${task.task}"`,
-        env
+        env,
+        5000,
+        ctx
       );
       return;
     } catch (error) {
-      await sendTelegramMessage(chatId, "❌ Failed to delete task.", env);
+      await sendTelegramMessage(
+        chatId,
+        "❌ Failed to delete task.",
+        env,
+        5000,
+        ctx
+      );
       return;
     }
   }
@@ -194,26 +293,34 @@ async function handleTelegramUpdate(update: TelegramUpdate, env: Env) {
   try {
     // Get the highest task_order
     const maxOrder = await env.DB.prepare(
-      "SELECT COALESCE(MAX(task_order), 0) as max_order FROM todos WHERE chat_id = ?"
+      "SELECT COALESCE(MAX(task_order), 0) as max_order FROM todos WHERE chat_id = ? AND user_id = ?"
     )
-      .bind(chatId.toString())
+      .bind(chatId.toString(), userId)
       .first();
 
     const nextOrder = ((maxOrder?.max_order as number) || 0) + 1;
 
     await env.DB.prepare(
-      "INSERT INTO todos (chat_id, task, is_done, task_order) VALUES (?, ?, FALSE, ?)"
+      "INSERT INTO todos (chat_id, user_id, task, is_done, task_order) VALUES (?, ?, ?, FALSE, ?)"
     )
-      .bind(chatId.toString(), taskText, nextOrder)
+      .bind(chatId.toString(), userId, taskText, nextOrder)
       .run();
 
     await sendTelegramMessage(
       chatId,
       `✅ Added task #${nextOrder}: "${taskText}"`,
-      env
+      env,
+      5000,
+      ctx
     );
   } catch (error) {
-    await sendTelegramMessage(chatId, "❌ Failed to add the task.", env);
+    await sendTelegramMessage(
+      chatId,
+      "❌ Failed to add the task.",
+      env,
+      5000,
+      ctx
+    );
   }
 
   // Update help command
@@ -232,23 +339,28 @@ Buy groceries
 /done 1
 /delete 1`;
 
-    await sendTelegramMessage(chatId, helpText, env);
+    await sendTelegramMessage(chatId, helpText, env, 5000, ctx);
     return;
   }
 
-  // If no command matches, show help message
-  await sendTelegramMessage(
-    chatId,
-    "❓ Unknown command. Use /help to see available commands.",
-    env
-  );
+  //   // If no command matches, show help message
+  //   await sendTelegramMessage(
+  //     chatId,
+  //     "❓ Unknown command. Use /help to see available commands.",
+  //     env,
+  //     5000,
+  //     ctx
+  //   );
 }
 
-router.post("/webhook", async (request: Request, env: Env) => {
-  const update: TelegramUpdate = await request.json();
-  await handleTelegramUpdate(update, env);
-  return new Response("OK");
-});
+router.post(
+  "/webhook",
+  async (request: Request, env: Env, ctx: ExecutionContext) => {
+    const update: TelegramUpdate = await request.json();
+    await handleTelegramUpdate(update, env, ctx);
+    return new Response("OK");
+  }
+);
 
 router.all("*", () => new Response("Not Found.", { status: 404 }));
 
@@ -261,9 +373,8 @@ export default {
     if (request.method === "POST") {
       try {
         const payload = (await request.json()) as Update;
-
-        // Make sure we return the Promise from handleUpdate
-        return await handleUpdate(payload, env);
+        // Pass the context to handleUpdate
+        return await handleUpdate(payload, env, ctx);
       } catch (e) {
         console.error(e);
         return new Response("Error processing request", { status: 500 });
@@ -273,13 +384,19 @@ export default {
   },
 };
 
-async function handleUpdate(update: Update, env: Env): Promise<Response> {
+// Update handleUpdate to accept ctx parameter
+async function handleUpdate(
+  update: Update,
+  env: Env,
+  ctx: ExecutionContext
+): Promise<Response> {
   if (!update.message?.text) {
     return new Response("OK", { status: 200 });
   }
 
   try {
-    await handleTelegramUpdate(update, env);
+    // Pass the context to handleTelegramUpdate
+    await handleTelegramUpdate(update, env, ctx);
     return new Response("OK", { status: 200 });
   } catch (e) {
     console.error(e);

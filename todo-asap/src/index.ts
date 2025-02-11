@@ -182,7 +182,7 @@ async function handleTelegramUpdate(
         chatId,
         `🎉 Your completed tasks:\n${winsList}`,
         env,
-        5000,
+        50000,
         ctx
       );
       return;
@@ -212,7 +212,7 @@ async function handleTelegramUpdate(
           chatId,
           "📭 No pending tasks. Add some tasks!",
           env,
-          5000,
+          50000,
           ctx
         );
         return;

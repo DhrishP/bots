@@ -5,7 +5,9 @@
   "scripts": {
     "deploy": "wrangler deploy",
     "dev": "wrangler dev",
-    "start": "wrangler dev"
+    "start": "wrangler dev",
+    "db:migrate:local": "wrangler d1 execute impzimzoom --file=./schema.sql --local",
+    "db:migrate:remote": "wrangler d1 execute impzimzoom --file=./schema.sql --remote"
   },
   "devDependencies": {
     "@types/bun": "latest",

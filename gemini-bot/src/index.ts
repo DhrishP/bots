@@ -57,7 +57,7 @@ async function sendTelegramMessage(
               },
               body: JSON.stringify({
                 chat_id: chatId,
-                message_id: result.result.message_id,
+                message_id: (result as any).result.message_id,
               }),
             }
           );
@@ -92,7 +92,7 @@ async function getActiveSession(
     .bind(chatId.toString(), userId)
     .run();
 
-  return result.lastRowId!;
+  return result.meta.last_row_id;
 }
 
 // Create new session
@@ -107,7 +107,7 @@ async function createNewSession(
     .bind(chatId.toString(), userId)
     .run();
 
-  return result.lastRowId!;
+  return result.meta.last_row_id;
 }
 
 // Get chat history
@@ -235,17 +235,14 @@ Each chat session maintains its own history, allowing for contextual conversatio
     return;
   }
 
-  // Handle regular messages
   try {
     const sessionId = await getActiveSession(chatId, userId, env);
     const history = await getChatHistory(sessionId, env);
 
-    // Store user message
     await storeMessage(sessionId, chatId, userId, "user", text, env);
 
-    // Initialize Gemini AI
     const genAI = new GoogleGenerativeAI(env.GEMINI_API_KEY);
-    const model = genAI.getGenerativeModel({ model: "gemini-1.5-pro" });
+    const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash" });
 
     // Create chat
     const chat = model.startChat({
@@ -255,14 +252,11 @@ Each chat session maintains its own history, allowing for contextual conversatio
       })),
     });
 
-    // Get response
     const result = await chat.sendMessage(text);
     const response = result.response.text();
 
-    // Store AI response
     await storeMessage(sessionId, chatId, userId, "assistant", response, env);
 
-    // Send response to user
     await sendTelegramMessage(chatId, response, env, 0, ctx);
   } catch (error) {
     console.error(error);

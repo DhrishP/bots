@@ -1,0 +1,28 @@
+{
+  "name": "linked",
+  "module": "src/index.ts",
+  "type": "module",
+  "scripts": {
+    "deploy": "wrangler deploy",
+    "dev": "wrangler dev",
+    "start": "wrangler dev",
+    "db:migrate:local": "wrangler d1 execute impzimzoom --file=./schema.sql --local",
+    "db:migrate:remote": "wrangler d1 execute impzimzoom --file=./schema.sql --remote"
+  },
+  "devDependencies": {
+    "@types/bun": "latest",
+    "wrangler": "^3.107.3"
+  },
+  "peerDependencies": {
+    "typescript": "^5.0.0"
+  },
+  "dependencies": {
+    "@cloudflare/workers-types": "^4.20250204.0",
+    "@google/generative-ai": "^0.21.0",
+    "@types/express": "^5.0.0",
+    "@types/node-telegram-bot-api": "^0.64.7",
+    "express": "^4.21.2",
+    "itty-router": "^5.0.18",
+    "node-telegram-bot-api": "^0.66.0"
+  }
+}

@@ -6,5 +6,5 @@ compatibility_flags = ["nodejs_compat"]
 [[d1_databases]]
 binding = "DB"
 database_name = "impzimzoom"
-database_id = "533101dd-48f7-41f9-bd37-dbe058ed1a2b"
+database_id = "7cbb0e63-48f1-4e7a-ac75-4d9ce197af10"
 

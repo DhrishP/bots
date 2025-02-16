@@ -224,9 +224,9 @@ async function handleTelegramUpdate(
 /listcreds - List all stored credentials
 
 📝 Context Management:
-/context <text> - Store new context
-/getcontext <prompt> - Get AI insights based on stored context
-/listcontext - List all stored context entries
+/context <title> <content> - Store new context
+/getcontext <title> - Get AI insights based on stored context
+/listcontext [search] - List all stored context entries (optionally filter by title)
 
 ℹ️ Other Commands:
 /start - Start the bot
@@ -402,12 +402,25 @@ async function handleTelegramUpdate(
 
   // Handle /context command
   if (text.startsWith("/context ")) {
-    const contextText = text.slice(9);
+    const parts = text.split(" ");
+    if (parts.length < 3) {
+      await sendTelegramMessage(
+        chatId,
+        "❌ Usage: /context <title> <content>",
+        env,
+        5000,
+        ctx
+      );
+      return;
+    }
+
+    const title = parts[1];
+    const contextText = parts.slice(2).join(" ");
     try {
       await env.DB.prepare(
-        "INSERT INTO contexts (chat_id, user_id, content) VALUES (?, ?, ?)"
+        "INSERT INTO contexts (chat_id, user_id, title, content) VALUES (?, ?, ?, ?)"
       )
-        .bind(chatId.toString(), userId, contextText)
+        .bind(chatId.toString(), userId, title, contextText)
         .run();
 
       await sendTelegramMessage(
@@ -519,36 +532,47 @@ async function handleTelegramUpdate(
   }
 
   // Handle /listcontext command
-  if (text === "/listcontext") {
+  if (text.startsWith("/listcontext")) {
     try {
-      const contexts = await env.DB.prepare(
-        "SELECT content FROM contexts WHERE chat_id = ? AND user_id = ? ORDER BY created_at DESC"
-      )
-        .bind(chatId.toString(), userId)
+      const titleFilter = text.slice("/listcontext".length).trim();
+
+      // Select content only if a filter is provided
+      let query = titleFilter
+        ? "SELECT title, content, created_at FROM contexts WHERE chat_id = ? AND user_id = ?"
+        : "SELECT title, created_at FROM contexts WHERE chat_id = ? AND user_id = ?";
+
+      let params = [chatId.toString(), userId];
+
+      if (titleFilter) {
+        query += " AND title LIKE ?";
+        params.push(`%${titleFilter}%`);
+      }
+
+      query += " ORDER BY created_at DESC";
+
+      const contexts = await env.DB.prepare(query)
+        .bind(...params)
         .all();
 
       if (!contexts.results?.length) {
-        await sendTelegramMessage(
-          chatId,
-          "📭 No context stored yet.",
-          env,
-          5000,
-          ctx
-        );
+        const message = titleFilter
+          ? `📭 No contexts found matching "${titleFilter}".`
+          : "📭 No contexts stored yet.";
+        await sendTelegramMessage(chatId, message, env, 5000, ctx);
         return;
       }
 
-      const contextList = contexts.results
-        .map((ctx: any) => `• ${ctx.content}`)
-        .join("\n");
+      const contextList = titleFilter
+        ? contexts.results
+            .map((ctx: any) => `📌 ${ctx.title}\n${ctx.content}\n`)
+            .join("\n")
+        : contexts.results.map((ctx: any) => `📌 ${ctx.title}`).join("\n");
 
-      await sendTelegramMessage(
-        chatId,
-        `📝 Your stored context:\n${contextList}`,
-        env,
-        5000,
-        ctx
-      );
+      const message = titleFilter
+        ? `📝 Contexts matching "${titleFilter}":\n${contextList}`
+        : `📝 Your stored contexts:\n${contextList}\n\nUse /listcontext <title> to see the content of specific contexts.`;
+
+      await sendTelegramMessage(chatId, message, env, 5000, ctx);
     } catch (error) {
       await sendTelegramMessage(
         chatId,

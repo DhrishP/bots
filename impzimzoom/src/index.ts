@@ -141,6 +141,7 @@ async function decrypt(encryptedText: string, key: string): Promise<string> {
 
     return decoder.decode(decryptedContent);
   } catch (error) {
+    console.error(error);
     throw new Error("Decryption failed. Wrong key?");
   }
 }
@@ -300,6 +301,7 @@ async function handleTelegramUpdate(update: TelegramUpdate, env: Env) {
         5000
       );
     } catch (error) {
+      console.error(error);
       await sendTelegramMessage(
         chatId,
         "❌ Failed to store credentials.",
@@ -386,6 +388,7 @@ async function handleTelegramUpdate(update: TelegramUpdate, env: Env) {
         30000
       );
     } catch (error) {
+      console.error(error);
       await sendTelegramMessage(
         chatId,
         "❌ Decryption failed. Wrong key?",
@@ -419,6 +422,7 @@ async function handleTelegramUpdate(update: TelegramUpdate, env: Env) {
           userId,
           title,
           content: contextText,
+          embedding: [],
         })
         .returning({ id: contexts.id })
         .execute();
@@ -430,6 +434,7 @@ async function handleTelegramUpdate(update: TelegramUpdate, env: Env) {
         5000
       );
     } catch (error) {
+      console.error(error);
       await sendTelegramMessage(
         chatId,
         "❌ Failed to store context.",
@@ -476,6 +481,7 @@ async function handleTelegramUpdate(update: TelegramUpdate, env: Env) {
 
       await sendTelegramMessage(chatId, response, env, 0);
     } catch (error) {
+      console.error(error);
       await sendTelegramMessage(
         chatId,
         "❌ Failed to process context with AI.",
@@ -516,6 +522,7 @@ async function handleTelegramUpdate(update: TelegramUpdate, env: Env) {
         5000
       );
     } catch (error) {
+      console.error(error);
       await sendTelegramMessage(
         chatId,
         "❌ Failed to fetch credentials.",
@@ -575,6 +582,7 @@ async function handleTelegramUpdate(update: TelegramUpdate, env: Env) {
 
       await sendTelegramMessage(chatId, message, env, 5000);
     } catch (error) {
+      console.error(error);
       await sendTelegramMessage(
         chatId,
         "❌ Failed to fetch context.",

@@ -1,9 +1,18 @@
-import { Router } from "itty-router";
+import express from "express";
 import { GoogleGenerativeAI } from "@google/generative-ai";
 import { Update } from "node-telegram-bot-api";
+import { credentials, contexts } from "./schema";
+import { eq, and } from "drizzle-orm";
+import { db } from "./db";
+import * as dotenv from "dotenv";
 
-interface Env {
-  DB: D1Database;
+dotenv.config();
+
+const app = express();
+app.use(express.json());
+
+export interface Env {
+  DATABASE_URL: string;
   TELEGRAM_BOT_TOKEN: string;
   GEMINI_API_KEY: string;
 }
@@ -141,8 +150,7 @@ async function sendTelegramMessage(
   chatId: number,
   text: string,
   env: Env,
-  deleteAfter: number = 0,
-  ctx: ExecutionContext
+  deleteAfter: number = 0
 ) {
   const response = await fetch(
     `https://api.telegram.org/bot${env.TELEGRAM_BOT_TOKEN}/sendMessage`,
@@ -161,14 +169,9 @@ async function sendTelegramMessage(
   const result = (await response.json()) as TelegramResponse;
 
   if (result.ok && deleteAfter > 0) {
-    ctx.waitUntil(
-      new Promise<void>((resolve) => {
-        setTimeout(async () => {
-          await deleteMessage(chatId, result.result.message_id, env);
-          resolve();
-        }, deleteAfter);
-      })
-    );
+    setTimeout(async () => {
+      await deleteMessage(chatId, result.result.message_id, env);
+    }, deleteAfter);
   }
 }
 
@@ -190,11 +193,7 @@ async function deleteMessage(chatId: number, messageId: number, env: Env) {
 }
 
 // Handle Telegram webhook updates
-async function handleTelegramUpdate(
-  update: TelegramUpdate,
-  env: Env,
-  ctx: ExecutionContext
-) {
+async function handleTelegramUpdate(update: TelegramUpdate, env: Env) {
   const message = update.message;
   if (!message?.text || !message.chat || !message.from) return;
 
@@ -208,8 +207,7 @@ async function handleTelegramUpdate(
       chatId,
       `👋 Welcome! I can help you store encrypted credentials and manage context.\n\nUse /help to see available commands.`,
       env,
-      0,
-      ctx
+      0
     );
     return;
   }
@@ -232,7 +230,7 @@ async function handleTelegramUpdate(
 /start - Start the bot
 /help - Show this help message`;
 
-    await sendTelegramMessage(chatId, helpText, env, 0, ctx);
+    await sendTelegramMessage(chatId, helpText, env, 0);
     return;
   }
 
@@ -244,8 +242,7 @@ async function handleTelegramUpdate(
         chatId,
         "❌ Usage: /creds <title> <username> <password>",
         env,
-        5000,
-        ctx
+        5000
       );
       return;
     }
@@ -260,8 +257,7 @@ async function handleTelegramUpdate(
       chatId,
       "🔑 Please provide the encryption key (send as a separate message):",
       env,
-      0,
-      ctx
+      0
     );
 
     // Store temporary data in KV or similar storage
@@ -283,17 +279,17 @@ async function handleTelegramUpdate(
     try {
       const encryptedPassword = await encrypt(pendingData.password, text);
 
-      await env.DB.prepare(
-        "INSERT INTO credentials (chat_id, user_id, title, username, encrypted_password) VALUES (?, ?, ?, ?, ?)"
-      )
-        .bind(
-          chatId.toString(),
+      await db
+        .insert(credentials)
+        .values({
+          chatId: chatId.toString(),
           userId,
-          pendingData.title,
-          pendingData.username,
-          encryptedPassword
-        )
-        .run();
+          title: pendingData.title,
+          username: pendingData.username,
+          encryptedPassword,
+        })
+        .returning({ id: credentials.id })
+        .execute();
 
       pendingEncryption.delete(`${chatId}-${userId}`);
 
@@ -301,16 +297,14 @@ async function handleTelegramUpdate(
         chatId,
         "✅ Credentials stored successfully!",
         env,
-        5000,
-        ctx
+        5000
       );
     } catch (error) {
       await sendTelegramMessage(
         chatId,
         "❌ Failed to store credentials.",
         env,
-        5000,
-        ctx
+        5000
       );
     }
     return;
@@ -324,26 +318,25 @@ async function handleTelegramUpdate(
         chatId,
         "❌ Please provide a valid credential number.",
         env,
-        5000,
-        ctx
+        5000
       );
       return;
     }
 
-    const cred = await env.DB.prepare(
-      "SELECT * FROM credentials WHERE chat_id = ? AND user_id = ? AND id = ?"
-    )
-      .bind(chatId.toString(), userId, credId)
-      .first();
-
-    if (!cred) {
-      await sendTelegramMessage(
-        chatId,
-        "❌ Credential not found.",
-        env,
-        5000,
-        ctx
+    const credResult = await db
+      .select()
+      .from(credentials)
+      .where(
+        and(
+          eq(credentials.chatId, chatId.toString()),
+          eq(credentials.userId, userId),
+          eq(credentials.id, credId)
+        )
       );
+
+    const cred = credResult[0]; // Get first result
+    if (!cred) {
+      await sendTelegramMessage(chatId, "❌ Credential not found.", env, 5000);
       return;
     }
 
@@ -351,16 +344,15 @@ async function handleTelegramUpdate(
       chatId,
       "🔑 Please provide the decryption key:",
       env,
-      5000,
-      ctx
+      5000
     );
-
-    pendingDecryption.set(`${chatId}-${userId}`, {
-      credId,
-      encryptedPassword: cred.encrypted_password,
-      timestamp: Date.now(),
+    await db.insert(credentials).values({
+      chatId: chatId.toString(),
+      userId,
+      title: cred.title,
+      username: cred.username,
+      encryptedPassword: cred.encryptedPassword,
     });
-
     return;
   }
 
@@ -373,11 +365,17 @@ async function handleTelegramUpdate(
         text
       );
 
-      const cred = await env.DB.prepare(
-        "SELECT * FROM credentials WHERE chat_id = ? AND user_id = ? AND id = ?"
-      )
-        .bind(chatId.toString(), userId, pendingDecryptData.credId)
-        .first();
+      const credResult = await db
+        .select()
+        .from(credentials)
+        .where(
+          and(
+            eq(credentials.chatId, chatId.toString()),
+            eq(credentials.userId, userId),
+            eq(credentials.id, pendingDecryptData.credId)
+          )
+        );
+      const cred = credResult[0];
 
       pendingDecryption.delete(`${chatId}-${userId}`);
 
@@ -385,16 +383,14 @@ async function handleTelegramUpdate(
         chatId,
         `🔐 Credential Details:\nTitle: ${cred?.title}\nUsername: ${cred?.username}\nPassword: ${decryptedPassword}`,
         env,
-        30000,
-        ctx
+        30000
       );
     } catch (error) {
       await sendTelegramMessage(
         chatId,
         "❌ Decryption failed. Wrong key?",
         env,
-        5000,
-        ctx
+        5000
       );
     }
     return;
@@ -408,8 +404,7 @@ async function handleTelegramUpdate(
         chatId,
         "❌ Usage: /context <title> <content>",
         env,
-        5000,
-        ctx
+        5000
       );
       return;
     }
@@ -417,26 +412,29 @@ async function handleTelegramUpdate(
     const title = parts[1];
     const contextText = parts.slice(2).join(" ");
     try {
-      await env.DB.prepare(
-        "INSERT INTO contexts (chat_id, user_id, title, content) VALUES (?, ?, ?, ?)"
-      )
-        .bind(chatId.toString(), userId, title, contextText)
-        .run();
+      await db
+        .insert(contexts)
+        .values({
+          chatId: chatId.toString(),
+          userId,
+          title,
+          content: contextText,
+        })
+        .returning({ id: contexts.id })
+        .execute();
 
       await sendTelegramMessage(
         chatId,
         "✅ Context stored successfully!",
         env,
-        5000,
-        ctx
+        5000
       );
     } catch (error) {
       await sendTelegramMessage(
         chatId,
         "❌ Failed to store context.",
         env,
-        5000,
-        ctx
+        5000
       );
     }
     return;
@@ -446,26 +444,27 @@ async function handleTelegramUpdate(
   if (text.startsWith("/getcontext ")) {
     const prompt = text.slice(11);
     try {
-      const contexts = await env.DB.prepare(
-        "SELECT content FROM contexts WHERE chat_id = ? AND user_id = ?"
-      )
-        .bind(chatId.toString(), userId)
-        .all();
+      const contextResults = await db
+        .select()
+        .from(contexts)
+        .where(
+          and(
+            eq(contexts.chatId, chatId.toString()),
+            eq(contexts.userId, userId)
+          )
+        );
 
-      if (!contexts.results?.length) {
+      if (!contextResults.length) {
         await sendTelegramMessage(
           chatId,
           "❌ No context found. Please add some context first using /context command.",
           env,
-          5000,
-          ctx
+          5000
         );
         return;
       }
 
-      const contextText = contexts.results
-        .map((c: any) => c.content)
-        .join("\n");
+      const contextText = contextResults.map((c: any) => c.content).join("\n");
 
       // Initialize Gemini AI - Updated implementation
       const genAI = new GoogleGenerativeAI(env.GEMINI_API_KEY);
@@ -475,14 +474,13 @@ async function handleTelegramUpdate(
       const result = await model.generateContent(combinedPrompt);
       const response = result.response.text();
 
-      await sendTelegramMessage(chatId, response, env, 0, ctx);
+      await sendTelegramMessage(chatId, response, env, 0);
     } catch (error) {
       await sendTelegramMessage(
         chatId,
         "❌ Failed to process context with AI.",
         env,
-        5000,
-        ctx
+        5000
       );
     }
     return;
@@ -491,24 +489,23 @@ async function handleTelegramUpdate(
   // Handle /listcreds command
   if (text === "/listcreds") {
     try {
-      const creds = await env.DB.prepare(
-        "SELECT id, title, username FROM credentials WHERE user_id = ? ORDER BY id"
-      )
-        .bind(userId)
-        .all();
+      const creds = await db
+        .select()
+        .from(credentials)
+        .where(eq(credentials.userId, userId))
+        .orderBy(credentials.id);
 
-      if (!creds.results?.length) {
+      if (!creds.length) {
         await sendTelegramMessage(
           chatId,
           "📭 No credentials stored yet.",
           env,
-          5000,
-          ctx
+          5000
         );
         return;
       }
 
-      const credList = creds.results
+      const credList = creds
         .map((cred: any) => `${cred.id}. ${cred.title} (${cred.username})`)
         .join("\n");
 
@@ -516,16 +513,14 @@ async function handleTelegramUpdate(
         chatId,
         `🔐 Your stored credentials:\n${credList}\n\nUse /show <number> to view details.`,
         env,
-        5000,
-        ctx
+        5000
       );
     } catch (error) {
       await sendTelegramMessage(
         chatId,
         "❌ Failed to fetch credentials.",
         env,
-        5000,
-        ctx
+        5000
       );
     }
     return;
@@ -550,36 +545,41 @@ async function handleTelegramUpdate(
 
       query += " ORDER BY created_at DESC";
 
-      const contexts = await env.DB.prepare(query)
-        .bind(...params)
-        .all();
+      const contextResults = await db
+        .select()
+        .from(contexts)
+        .where(
+          and(
+            eq(contexts.chatId, chatId.toString()),
+            eq(contexts.userId, userId)
+          )
+        );
 
-      if (!contexts.results?.length) {
+      if (!contextResults.length) {
         const message = titleFilter
           ? `📭 No contexts found matching "${titleFilter}".`
           : "📭 No contexts stored yet.";
-        await sendTelegramMessage(chatId, message, env, 5000, ctx);
+        await sendTelegramMessage(chatId, message, env, 5000);
         return;
       }
 
       const contextList = titleFilter
-        ? contexts.results
+        ? contextResults
             .map((ctx: any) => `📌 ${ctx.title}\n${ctx.content}\n`)
             .join("\n")
-        : contexts.results.map((ctx: any) => `📌 ${ctx.title}`).join("\n");
+        : contextResults.map((ctx: any) => `📌 ${ctx.title}`).join("\n");
 
       const message = titleFilter
         ? `📝 Contexts matching "${titleFilter}":\n${contextList}`
         : `📝 Your stored contexts:\n${contextList}\n\nUse /listcontext <title> to see the content of specific contexts.`;
 
-      await sendTelegramMessage(chatId, message, env, 5000, ctx);
+      await sendTelegramMessage(chatId, message, env, 5000);
     } catch (error) {
       await sendTelegramMessage(
         chatId,
         "❌ Failed to fetch context.",
         env,
-        5000,
-        ctx
+        5000
       );
     }
     return;
@@ -590,60 +590,31 @@ async function handleTelegramUpdate(
 const pendingEncryption = new Map();
 const pendingDecryption = new Map();
 
-// Router setup
-const router = Router();
+app.get("/", (req, res) => {
+  res.status(200).send("Bot is running!");
+});
 
-// Add a root route handler
-router.get("/", () => new Response("Bot is running!", { status: 200 }));
-
-// Add webhook route
-router.post(
-  "/webhook",
-  async (request: Request, env: Env, ctx: ExecutionContext) => {
-    const update: TelegramUpdate = await request.json();
-    await handleTelegramUpdate(update, env, ctx);
-    return new Response("OK", { status: 200 });
-  }
-);
-
-// Must be after all other routes
-router.all("*", () => new Response("Not Found", { status: 404 }));
-
-export default {
-  async fetch(
-    request: Request,
-    env: Env,
-    ctx: ExecutionContext
-  ): Promise<Response> {
-    if (request.method === "POST") {
-      try {
-        const payload = (await request.json()) as Update;
-        // Pass the context to handleUpdate
-        return await handleUpdate(payload, env, ctx);
-      } catch (e) {
-        console.error(e);
-        return new Response("Error processing request", { status: 500 });
-      }
-    }
-    return new Response("OK", { status: 200 });
-  },
-};
-
-// Add handleUpdate function
-async function handleUpdate(
-  update: Update,
-  env: Env,
-  ctx: ExecutionContext
-): Promise<Response> {
-  if (!update.message?.text) {
-    return new Response("OK", { status: 200 });
-  }
-
+app.post("/webhook", async (req, res) => {
   try {
-    await handleTelegramUpdate(update, env, ctx);
-    return new Response("OK", { status: 200 });
+    const update = req.body as Update;
+    await handleTelegramUpdate(update, {
+      DATABASE_URL: process.env.DATABASE_URL!,
+      TELEGRAM_BOT_TOKEN: process.env.TELEGRAM_BOT_TOKEN!,
+      GEMINI_API_KEY: process.env.GEMINI_API_KEY!,
+    });
+    res.status(200).send("OK");
   } catch (e) {
     console.error(e);
-    return new Response("Error handling command", { status: 500 });
+    res.status(500).send("Error processing request");
   }
-}
+});
+
+// Handle 404
+app.use((req, res) => {
+  res.status(404).send("Not Found");
+});
+
+const PORT = process.env.PORT || 3000;
+app.listen(PORT, () => {
+  console.log(`Server is running on port ${PORT}`);
+});

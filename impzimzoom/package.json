@@ -1,28 +1,28 @@
 {
   "name": "impzimzoom",
-  "module": "src/index.ts",
-  "type": "module",
+  "version": "1.0.0",
   "scripts": {
-    "deploy": "wrangler deploy",
-    "dev": "wrangler dev",
-    "start": "wrangler dev",
-    "db:migrate:local": "wrangler d1 execute impzimzoom --file=./schema.sql --local",
-    "db:migrate:remote": "wrangler d1 execute impzimzoom --file=./schema.sql --remote"
-  },
-  "devDependencies": {
-    "@types/bun": "latest",
-    "wrangler": "^3.107.3"
-  },
-  "peerDependencies": {
-    "typescript": "^5.0.0"
+    "dev": "netlify dev",
+    "build": "tsc",
+    "start": "node dist/index.js",
+    "db:generate": "drizzle-kit generate:pg",
+    "db:push": "drizzle-kit push:pg",
+    "db:studio": "drizzle-kit studio"
   },
   "dependencies": {
-    "@cloudflare/workers-types": "^4.20250204.0",
     "@google/generative-ai": "^0.21.0",
-    "@types/express": "^5.0.0",
-    "@types/node-telegram-bot-api": "^0.64.7",
+    "@neondatabase/serverless": "^0.10.4",
+    "dotenv": "^16.4.7",
+    "drizzle-orm": "^0.39.3",
     "express": "^4.21.2",
-    "itty-router": "^5.0.18",
     "node-telegram-bot-api": "^0.66.0"
+  },
+  "devDependencies": {
+    "@types/express": "^4.17.21",
+    "@types/node": "^20.11.24",
+    "@types/node-telegram-bot-api": "^0.64.7",
+    "drizzle-kit": "^0.30.4",
+    "ts-node": "^10.9.2",
+    "typescript": "^5.3.3"
   }
 }

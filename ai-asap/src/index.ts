@@ -249,7 +249,14 @@ Each chat session maintains its own history, allowing for contextual conversatio
         role: msg.role,
         parts: [{ text: msg.content }],
       })),
+      generationConfig: {
+        maxOutputTokens: 100, // Limit response length
+      },
     });
+
+    const systemPrompt =
+      "You are a helpful AI assistant. Keep responses brief and concise unless specifically asked for detailed explanations.";
+    await chat.sendMessage(systemPrompt);
 
     const result = await chat.sendMessage(text);
     const response = result.response.text();

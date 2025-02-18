@@ -261,7 +261,7 @@ Each chat session maintains its own history, allowing for contextual conversatio
     const result = await chat.sendMessage(text);
     const response = result.response.text();
 
-    await storeMessage(sessionId, chatId, userId, "assistant", response, env);
+    await storeMessage(sessionId, chatId, userId, "model", response, env);
 
     await sendTelegramMessage(chatId, response, env, 0, ctx);
   } catch (error) {

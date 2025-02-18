@@ -80,6 +80,26 @@ async function deleteMessage(chatId: number, messageId: number, env: Env) {
   );
 }
 
+// Helper function for reordering tasks
+async function reorderTasks(chatId: string, userId: number, env: Env) {
+  await env.DB.prepare(
+    `UPDATE todos 
+     SET task_order = (
+       SELECT COUNT(*) + 1 
+       FROM todos t2 
+       WHERE t2.chat_id = todos.chat_id 
+       AND t2.user_id = todos.user_id 
+       AND t2.is_done = FALSE 
+       AND t2.task_order < todos.task_order
+     )
+     WHERE chat_id = ? 
+     AND user_id = ? 
+     AND is_done = FALSE`
+  )
+    .bind(chatId, userId)
+    .run();
+}
+
 // Handle Telegram webhook updates
 async function handleTelegramUpdate(
   update: TelegramUpdate,
@@ -110,7 +130,7 @@ async function handleTelegramUpdate(
     const taskNumber = parseInt(text.split(" ")[1]);
     try {
       const task = await env.DB.prepare(
-        "SELECT * FROM todos WHERE chat_id = ? AND user_id = ? AND task_order = ?"
+        "SELECT * FROM todos WHERE chat_id = ? AND user_id = ? AND task_order = ? AND is_done = FALSE"
       )
         .bind(chatId.toString(), userId, taskNumber)
         .first();
@@ -126,13 +146,27 @@ async function handleTelegramUpdate(
         return;
       }
 
+      // First, mark the task as done
+      await env.DB.prepare("UPDATE todos SET is_done = TRUE WHERE id = ?")
+        .bind(task.id)
+        .run();
+
+      // Then reorder remaining active tasks
       await env.DB.prepare(
         `UPDATE todos 
-         SET is_done = TRUE, 
-             task_order = 5000 + task_order 
-         WHERE chat_id = ? AND user_id = ? AND task_order = ?`
+         SET task_order = (
+           SELECT COUNT(*) + 1 
+           FROM todos t2 
+           WHERE t2.chat_id = todos.chat_id 
+           AND t2.user_id = todos.user_id 
+           AND t2.is_done = FALSE 
+           AND t2.task_order < todos.task_order
+         )
+         WHERE chat_id = ? 
+         AND user_id = ? 
+         AND is_done = FALSE`
       )
-        .bind(chatId.toString(), userId, taskNumber)
+        .bind(chatId.toString(), userId)
         .run();
 
       await sendTelegramMessage(
@@ -201,6 +235,9 @@ async function handleTelegramUpdate(
   // Handle /list command
   if (text === "/list") {
     try {
+      // First reorder tasks
+      await reorderTasks(chatId.toString(), userId, env);
+
       const todos = await env.DB.prepare(
         "SELECT * FROM todos WHERE chat_id = ? AND user_id = ? AND is_done = FALSE ORDER BY task_order"
       )
@@ -226,7 +263,7 @@ async function handleTelegramUpdate(
         chatId,
         `📋 Your tasks:\n${taskList}`,
         env,
-        5000,
+        50000,
         ctx
       );
       return;
@@ -301,32 +338,28 @@ async function handleTelegramUpdate(
   // New /reorder command
   if (text === "/reorder") {
     try {
-      // Transaction for atomic updates
-      await env.DB.batch([
-        // Get current pending tasks in order
-        env.DB.prepare(
-          "SELECT task_order FROM todos WHERE chat_id = ? AND user_id = ? AND is_done = FALSE ORDER BY task_order"
-        ).bind(chatId.toString(), userId),
-
-        // Update task_order sequentially
-        env.DB.prepare(
-          `WITH sorted AS (
-            SELECT id, ROW_NUMBER() OVER (ORDER BY task_order) as new_order
-            FROM todos 
-            WHERE chat_id = ? AND user_id = ? AND is_done = FALSE
-          )
-          UPDATE todos
-          SET task_order = sorted.new_order
-          FROM sorted
-          WHERE todos.id = sorted.id`
-        ).bind(chatId.toString(), userId),
-      ]);
+      await env.DB.prepare(
+        `UPDATE todos 
+         SET task_order = (
+           SELECT COUNT(*) + 1 
+           FROM todos t2 
+           WHERE t2.chat_id = todos.chat_id 
+           AND t2.user_id = todos.user_id 
+           AND t2.is_done = FALSE 
+           AND t2.task_order < todos.task_order
+         )
+         WHERE chat_id = ? 
+         AND user_id = ? 
+         AND is_done = FALSE`
+      )
+        .bind(chatId.toString(), userId)
+        .run();
 
       await sendTelegramMessage(
         chatId,
         "🔢 Task order has been reorganized! Use /list to see the new order.",
         env,
-        5000,
+        50000,
         ctx
       );
     } catch (error) {
@@ -396,9 +429,12 @@ Buy groceries
   }
 
   try {
+    // First reorder existing tasks
+    await reorderTasks(chatId.toString(), userId, env);
+
     // Get the highest task_order
     const maxOrder = await env.DB.prepare(
-      "SELECT COALESCE(MAX(task_order), 0) as max_order FROM todos WHERE chat_id = ? AND user_id = ?"
+      "SELECT COALESCE(MAX(task_order), 0) as max_order FROM todos WHERE chat_id = ? AND user_id = ? AND is_done = FALSE"
     )
       .bind(chatId.toString(), userId)
       .first();

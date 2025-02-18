@@ -4,16 +4,15 @@ import {
   text,
   timestamp,
   index,
-  integer,
   vector,
 } from "drizzle-orm/pg-core";
 
 export const credentials = pgTable(
-  'credentials',
+  "credentials",
   {
     id: serial("id").primaryKey(),
     chatId: text("chat_id").notNull(),
-    userId: integer("user_id").notNull(),
+    userId: text("user_id").notNull(),
     title: text("title").notNull(),
     username: text("username").notNull(),
     encryptedPassword: text("encrypted_password").notNull(),
@@ -29,7 +28,7 @@ export const contexts = pgTable(
   {
     id: serial("id").primaryKey(),
     chatId: text("chat_id").notNull(),
-    userId: integer("user_id").notNull(),
+    userId: text("user_id").notNull(),
     title: text("title").notNull(),
     content: text("content").notNull(),
     createdAt: timestamp("created_at").defaultNow(),
@@ -37,7 +36,6 @@ export const contexts = pgTable(
   },
   (table) => ({
     contextUserIdx: index("idx_context_user").on(table.chatId, table.userId),
-    // Vector similarity index using HNSW
     embeddingIdx: index("embedding_idx").using(
       "hnsw",
       table.embedding.op("vector_cosine_ops")

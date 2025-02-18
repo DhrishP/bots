@@ -284,7 +284,7 @@ async function handleTelegramUpdate(update: TelegramUpdate, env: Env) {
         .insert(credentials)
         .values({
           chatId: chatId.toString(),
-          userId,
+          userId: userId.toString(),
           title: pendingData.title,
           username: pendingData.username,
           encryptedPassword,
@@ -331,7 +331,7 @@ async function handleTelegramUpdate(update: TelegramUpdate, env: Env) {
       .where(
         and(
           eq(credentials.chatId, chatId.toString()),
-          eq(credentials.userId, userId),
+          eq(credentials.userId, userId.toString()),
           eq(credentials.id, credId)
         )
       );
@@ -350,7 +350,7 @@ async function handleTelegramUpdate(update: TelegramUpdate, env: Env) {
     );
     await db.insert(credentials).values({
       chatId: chatId.toString(),
-      userId,
+      userId: userId.toString(),
       title: cred.title,
       username: cred.username,
       encryptedPassword: cred.encryptedPassword,
@@ -373,7 +373,7 @@ async function handleTelegramUpdate(update: TelegramUpdate, env: Env) {
         .where(
           and(
             eq(credentials.chatId, chatId.toString()),
-            eq(credentials.userId, userId),
+            eq(credentials.userId, userId.toString()),
             eq(credentials.id, pendingDecryptData.credId)
           )
         );
@@ -419,7 +419,7 @@ async function handleTelegramUpdate(update: TelegramUpdate, env: Env) {
         .insert(contexts)
         .values({
           chatId: chatId.toString(),
-          userId,
+          userId: userId.toString(),
           title,
           content: contextText,
           embedding: [],
@@ -455,7 +455,7 @@ async function handleTelegramUpdate(update: TelegramUpdate, env: Env) {
         .where(
           and(
             eq(contexts.chatId, chatId.toString()),
-            eq(contexts.userId, userId)
+            eq(contexts.userId, userId.toString())
           )
         );
 
@@ -498,7 +498,7 @@ async function handleTelegramUpdate(update: TelegramUpdate, env: Env) {
       const creds = await db
         .select()
         .from(credentials)
-        .where(eq(credentials.userId, userId))
+        .where(eq(credentials.userId, userId.toString()))
         .orderBy(credentials.id);
 
       if (!creds.length) {
@@ -543,7 +543,7 @@ async function handleTelegramUpdate(update: TelegramUpdate, env: Env) {
         ? "SELECT title, content, created_at FROM contexts WHERE chat_id = ? AND user_id = ?"
         : "SELECT title, created_at FROM contexts WHERE chat_id = ? AND user_id = ?";
 
-      let params = [chatId.toString(), userId];
+      let params = [chatId.toString(), userId.toString()];
 
       if (titleFilter) {
         query += " AND title LIKE ?";
@@ -558,7 +558,7 @@ async function handleTelegramUpdate(update: TelegramUpdate, env: Env) {
         .where(
           and(
             eq(contexts.chatId, chatId.toString()),
-            eq(contexts.userId, userId)
+            eq(contexts.userId, userId.toString())
           )
         );
 

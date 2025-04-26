@@ -27,6 +27,7 @@ interface TelegramUpdate {
       id: number;
     };
     text?: string;
+    message_id?: number;
   };
 }
 
@@ -319,21 +320,35 @@ async function handleTelegramUpdate(update: TelegramUpdate, env: Env) {
     const username = parts[2];
     const password = parts.slice(3).join(" ");
 
-    // Ask for encryption key
-    await sendTelegramMessage(
-      chatId,
-      "🔑 Please provide the encryption key (send as a separate message):",
-      env,
-      0
+    // Delete the original command message for security
+    if (message.message_id) {
+      await deleteMessage(chatId, message.message_id, env);
+    }
+
+    // Ask for encryption key and store message ID for later deletion
+    const response = await fetch(
+      `https://api.telegram.org/bot${env.TELEGRAM_BOT_TOKEN}/sendMessage`,
+      {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          chat_id: chatId,
+          text: "🔑 Please provide the encryption key (send as a separate message):",
+        }),
+      }
     );
 
+    const result = (await response.json()) as TelegramResponse;
+
     // Store temporary data in KV or similar storage
-    // For this example, we'll use a simple global map
     pendingEncryption.set(`${chatId}-${userId}`, {
       title,
       username,
       password,
       timestamp: Date.now(),
+      promptMessageId: result.result.message_id, // Store prompt message ID
     });
 
     return;
@@ -342,7 +357,16 @@ async function handleTelegramUpdate(update: TelegramUpdate, env: Env) {
   // Check for pending encryption
   const pendingData = pendingEncryption.get(`${chatId}-${userId}`);
   if (pendingData && Date.now() - pendingData.timestamp < 60000) {
-    // 1 minute timeout
+    // Delete the message containing the encryption key
+    if (message.message_id) {
+      await deleteMessage(chatId, message.message_id, env);
+    }
+
+    // Delete the prompt message
+    if (pendingData.promptMessageId) {
+      await deleteMessage(chatId, pendingData.promptMessageId, env);
+    }
+
     try {
       const encryptedPassword = await encrypt(pendingData.password, text);
 
@@ -402,31 +426,58 @@ async function handleTelegramUpdate(update: TelegramUpdate, env: Env) {
         )
       );
 
-    const cred = credResult[0]; // Get first result
+    const cred = credResult[0];
     if (!cred) {
       await sendTelegramMessage(chatId, "❌ Credential not found.", env, 5000);
       return;
     }
+
+    // Delete the show command message
+    if (message.message_id) {
+      await deleteMessage(chatId, message.message_id, env);
+    }
+
+    // Send prompt and store its message ID
+    const response = await fetch(
+      `https://api.telegram.org/bot${env.TELEGRAM_BOT_TOKEN}/sendMessage`,
+      {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          chat_id: chatId,
+          text: "🔑 Please provide the decryption key:",
+        }),
+      }
+    );
+
+    const result = (await response.json()) as TelegramResponse;
 
     // Store the credential info for decryption
     pendingDecryption.set(`${chatId}-${userId}`, {
       credId: cred.id,
       encryptedPassword: cred.encryptedPassword,
       timestamp: Date.now(),
+      promptMessageId: result.result.message_id,
     });
 
-    await sendTelegramMessage(
-      chatId,
-      "🔑 Please provide the decryption key:",
-      env,
-      5000
-    );
     return;
   }
 
   // Check for pending decryption
   const pendingDecryptData = pendingDecryption.get(`${chatId}-${userId}`);
   if (pendingDecryptData && Date.now() - pendingDecryptData.timestamp < 60000) {
+    // Delete the message containing the decryption key
+    if (message.message_id) {
+      await deleteMessage(chatId, message.message_id, env);
+    }
+
+    // Delete the prompt message
+    if (pendingDecryptData.promptMessageId) {
+      await deleteMessage(chatId, pendingDecryptData.promptMessageId, env);
+    }
+
     try {
       const decryptedPassword = await decrypt(
         pendingDecryptData.encryptedPassword,

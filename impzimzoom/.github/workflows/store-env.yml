@@ -1,0 +1,14 @@
+﻿name: Store ENV File
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - '.env'
+      - '.dev.vars'
+
+jobs:
+  store-env:
+    uses: your-username/env-storage/.github/workflows/store-env-reusable.yml@main
+    secrets:
+      ENV_PAT: ${{ secrets.ENV_PAT }}

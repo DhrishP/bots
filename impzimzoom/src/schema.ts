@@ -32,7 +32,7 @@ export const contexts = pgTable(
     title: text("title").notNull(),
     content: text("content").notNull(),
     createdAt: timestamp("created_at").defaultNow(),
-    embedding: vector("embedding", { dimensions: 1536 }),
+    embedding: vector("embedding", { dimensions: 1024 }),
   },
   (table) => ({
     contextUserIdx: index("idx_context_user").on(table.chatId, table.userId),

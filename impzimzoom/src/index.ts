@@ -2,7 +2,7 @@ import express from "express";
 import { GoogleGenerativeAI } from "@google/generative-ai";
 import { Update } from "node-telegram-bot-api";
 import { credentials, contexts } from "./schema";
-import { eq, and } from "drizzle-orm";
+import { eq, and, cosineDistance, desc, gt, sql } from "drizzle-orm";
 import { db } from "./db";
 import * as dotenv from "dotenv";
 
@@ -15,6 +15,7 @@ export interface Env {
   DATABASE_URL: string;
   TELEGRAM_BOT_TOKEN: string;
   GEMINI_API_KEY: string;
+  VOYAGE_API_KEY: string;
 }
 
 interface TelegramUpdate {
@@ -34,6 +35,13 @@ interface TelegramResponse {
   result: {
     message_id: number;
   };
+}
+
+interface VoyageEmbeddingResponse {
+  data: Array<{
+    embedding: number[];
+    index: number;
+  }>;
 }
 
 // Helper function to encrypt text
@@ -193,6 +201,64 @@ async function deleteMessage(chatId: number, messageId: number, env: Env) {
   );
 }
 
+// Helper function to generate embeddings using Voyage AI
+async function generateEmbedding(text: string, env: Env): Promise<number[]> {
+  const response = await fetch("https://api.voyageai.com/v1/embeddings", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${env.VOYAGE_API_KEY}`,
+    },
+    body: JSON.stringify({
+      input: text,
+      model: "voyage-3",
+      input_type: "text",
+    }),
+  });
+
+  if (!response.ok) {
+    throw new Error(`Failed to generate embedding: ${response.statusText}`);
+  }
+
+  const result = (await response.json()) as VoyageEmbeddingResponse;
+  return result.data[0].embedding;
+}
+
+// Helper function to find similar contexts
+async function findSimilarContexts(
+  embedding: number[],
+  userId: string,
+  chatId: string
+) {
+  const similarity = sql<number>`1 - (${cosineDistance(
+    contexts.embedding,
+    embedding
+  )})`;
+
+  const results = await db
+    .select({
+      title: contexts.title,
+      content: contexts.content,
+      similarity: similarity,
+    })
+    .from(contexts)
+    .where(
+      and(
+        eq(contexts.userId, userId),
+        eq(contexts.chatId, chatId),
+        gt(similarity, 0.5)
+      )
+    )
+    .orderBy(desc(similarity))
+    .limit(4);
+
+  console.log(
+    "Similarities:",
+    results.map((r) => r.similarity)
+  );
+  return results;
+}
+
 // Handle Telegram webhook updates
 async function handleTelegramUpdate(update: TelegramUpdate, env: Env) {
   const message = update.message;
@@ -342,19 +408,19 @@ async function handleTelegramUpdate(update: TelegramUpdate, env: Env) {
       return;
     }
 
+    // Store the credential info for decryption
+    pendingDecryption.set(`${chatId}-${userId}`, {
+      credId: cred.id,
+      encryptedPassword: cred.encryptedPassword,
+      timestamp: Date.now(),
+    });
+
     await sendTelegramMessage(
       chatId,
       "🔑 Please provide the decryption key:",
       env,
       5000
     );
-    await db.insert(credentials).values({
-      chatId: chatId.toString(),
-      userId: userId.toString(),
-      title: cred.title,
-      username: cred.username,
-      encryptedPassword: cred.encryptedPassword,
-    });
     return;
   }
 
@@ -415,6 +481,9 @@ async function handleTelegramUpdate(update: TelegramUpdate, env: Env) {
     const title = parts[1];
     const contextText = parts.slice(2).join(" ");
     try {
+      // Generate embedding for the context
+      const embedding = await generateEmbedding(contextText, env);
+
       await db
         .insert(contexts)
         .values({
@@ -422,7 +491,7 @@ async function handleTelegramUpdate(update: TelegramUpdate, env: Env) {
           userId: userId.toString(),
           title,
           content: contextText,
-          embedding: [],
+          embedding,
         })
         .returning({ id: contexts.id })
         .execute();
@@ -449,29 +518,29 @@ async function handleTelegramUpdate(update: TelegramUpdate, env: Env) {
   if (text.startsWith("/getcontext ")) {
     const prompt = text.slice(11);
     try {
-      const contextResults = await db
-        .select()
-        .from(contexts)
-        .where(
-          and(
-            eq(contexts.chatId, chatId.toString()),
-            eq(contexts.userId, userId.toString())
-          )
-        );
+      // Generate embedding for the query
+      const queryEmbedding = await generateEmbedding(prompt, env);
 
-      if (!contextResults.length) {
+      // Find similar contexts
+      const similarContexts = await findSimilarContexts(
+        queryEmbedding,
+        userId.toString(),
+        chatId.toString()
+      );
+
+      if (!similarContexts.length) {
         await sendTelegramMessage(
           chatId,
-          "❌ No context found. Please add some context first using /context command.",
+          "❌ No relevant context found. Please add some context first using /context command.",
           env,
           5000
         );
         return;
       }
 
-      const contextText = contextResults.map((c: any) => c.content).join("\n");
+      const contextText = similarContexts.map((c) => c.content).join("\n\n");
 
-      // Initialize Gemini AI - Updated implementation
+      // Initialize Gemini AI and generate response
       const genAI = new GoogleGenerativeAI(env.GEMINI_API_KEY);
       const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash" });
 
@@ -609,6 +678,7 @@ app.post("/webhook", async (req, res) => {
       DATABASE_URL: process.env.DATABASE_URL!,
       TELEGRAM_BOT_TOKEN: process.env.TELEGRAM_BOT_TOKEN!,
       GEMINI_API_KEY: process.env.GEMINI_API_KEY!,
+      VOYAGE_API_KEY: process.env.VOYAGE_API_KEY!,
     });
     res.status(200).send("OK");
   } catch (e) {

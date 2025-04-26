@@ -35,6 +35,7 @@ async function sendTelegramMessage(
   deleteAfter: number = 0,
   ctx: ExecutionContext
 ) {
+  console.log("chatId", chatId);
   const response = await fetch(
     `https://api.telegram.org/bot${env.TELEGRAM_BOT_TOKEN}/sendMessage`,
     {

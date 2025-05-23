@@ -21,7 +21,6 @@ interface TelegramUpdate {
   };
 }
 
-
 interface ExecutionContext {
   waitUntil(promise: Promise<any>): void;
 }

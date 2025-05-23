@@ -618,7 +618,12 @@ async function handleTelegramUpdate(update: TelegramUpdate, env: Env) {
       const creds = await db
         .select()
         .from(credentials)
-        .where(eq(credentials.userId, userId.toString()))
+        .where(
+          and(
+            eq(credentials.userId, userId.toString()),
+            eq(credentials.chatId, chatId.toString())
+          )
+        )
         .orderBy(credentials.id);
 
       if (!creds.length) {
@@ -658,29 +663,25 @@ async function handleTelegramUpdate(update: TelegramUpdate, env: Env) {
     try {
       const titleFilter = text.slice("/listcontext".length).trim();
 
-      // Select content only if a filter is provided
-      let query = titleFilter
-        ? "SELECT title, content, created_at FROM contexts WHERE chat_id = ? AND user_id = ?"
-        : "SELECT title, created_at FROM contexts WHERE chat_id = ? AND user_id = ?";
-
-      let params = [chatId.toString(), userId.toString()];
+      // Build conditions for Drizzle query
+      const conditions = [
+        eq(contexts.chatId, chatId.toString()),
+        eq(contexts.userId, userId.toString()),
+      ];
 
       if (titleFilter) {
-        query += " AND title LIKE ?";
-        params.push(`%${titleFilter}%`);
+        conditions.push(sql`${contexts.title} LIKE ${"%" + titleFilter + "%"}`);
       }
 
-      query += " ORDER BY created_at DESC";
-
       const contextResults = await db
-        .select()
+        .select({
+          title: contexts.title,
+          content: contexts.content, // Ensure content is selected for display
+          createdAt: contexts.createdAt,
+        })
         .from(contexts)
-        .where(
-          and(
-            eq(contexts.chatId, chatId.toString()),
-            eq(contexts.userId, userId.toString())
-          )
-        );
+        .where(and(...conditions))
+        .orderBy(desc(contexts.createdAt)); // Use desc for Drizzle
 
       if (!contextResults.length) {
         const message = titleFilter
@@ -690,17 +691,31 @@ async function handleTelegramUpdate(update: TelegramUpdate, env: Env) {
         return;
       }
 
-      const contextList = titleFilter
-        ? contextResults
-            .map((ctx: any) => `📌 ${ctx.title}\n${ctx.content}\n`)
-            .join("\n")
-        : contextResults.map((ctx: any) => `📌 ${ctx.title}`).join("\n");
+      const contextList = contextResults
+        .map((ctx: any) => {
+          let entry = `📌 ${ctx.title}`;
+          if (titleFilter) {
+            // Only show content if specifically filtering by title
+            entry += `\n${ctx.content}`;
+          }
+          return entry;
+        })
+        .join("\n\n---\n\n"); // Added separator for better readability
 
-      const message = titleFilter
-        ? `📝 Contexts matching "${titleFilter}":\n${contextList}`
-        : `📝 Your stored contexts:\n${contextList}\n\nUse /listcontext <title> to see the content of specific contexts.`;
+      const messageHeader = titleFilter
+        ? `📝 Contexts matching "${titleFilter}":`
+        : `📝 Your stored contexts:`;
 
-      await sendTelegramMessage(chatId, message, env, 5000);
+      const messageFooter = titleFilter
+        ? ""
+        : "\n\nUse /listcontext <title_keyword> to see content of specific contexts or /getcontext <query> to use them with AI.";
+
+      await sendTelegramMessage(
+        chatId,
+        `${messageHeader}\n${contextList}${messageFooter}`,
+        env,
+        15000
+      ); // Increased auto-delete time
     } catch (error) {
       console.error(error);
       await sendTelegramMessage(

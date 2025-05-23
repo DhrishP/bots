@@ -285,7 +285,7 @@ async function handleTelegramUpdate(
     const taskNumber = parseInt(text.split(" ")[1]);
     try {
       const task = await env.DB.prepare(
-        "SELECT * FROM todos WHERE chat_id = ? AND user_id = ? AND task_order = ?"
+        "SELECT * FROM todos WHERE chat_id = ? AND user_id = ? AND task_order = ? AND is_done = FALSE"
       )
         .bind(chatId.toString(), userId, taskNumber)
         .first();
@@ -293,7 +293,7 @@ async function handleTelegramUpdate(
       if (!task) {
         await sendTelegramMessage(
           chatId,
-          "❌ Invalid task number.",
+          "❌ Invalid task number or task already completed.",
           env,
           5000,
           ctx
@@ -302,16 +302,16 @@ async function handleTelegramUpdate(
       }
 
       await env.DB.prepare(
-        "DELETE FROM todos WHERE chat_id = ? AND user_id = ? AND task_order = ?"
+        "DELETE FROM todos WHERE chat_id = ? AND user_id = ? AND task_order = ? AND is_done = FALSE"
       )
         .bind(chatId.toString(), userId, taskNumber)
         .run();
 
-      // Reorder remaining tasks
+      // Reorder remaining active tasks
       await env.DB.prepare(
         `UPDATE todos 
          SET task_order = task_order - 1 
-         WHERE chat_id = ? AND user_id = ? AND task_order > ?`
+         WHERE chat_id = ? AND user_id = ? AND task_order > ? AND is_done = FALSE`
       )
         .bind(chatId.toString(), userId, taskNumber)
         .run();

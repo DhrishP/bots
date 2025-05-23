@@ -1,4 +1,4 @@
-import { google } from "@ai-sdk/google";
+import { createGoogleGenerativeAI } from "@ai-sdk/google";
 import { generateObject } from "ai";
 import { z } from "zod";
 import { Router } from "itty-router";
@@ -20,6 +20,7 @@ interface TelegramUpdate {
     text?: string;
   };
 }
+
 
 interface ExecutionContext {
   waitUntil(promise: Promise<any>): void;
@@ -69,9 +70,12 @@ async function generateSuggestions(prompt: string, env: Env) {
       );
       return ["API Key is missing. Cannot generate suggestions."];
     }
+    const google = createGoogleGenerativeAI({
+      apiKey: env.GEMINI_API_KEY,
+    });
 
     const { object } = await generateObject({
-      model: google("gemini-1.5-flash"), // Using google helper for Gemini
+      model: google("gemini-2.0-flash-001"), // Using google helper for Gemini
       schema: z.object({
         suggestions: z.array(z.string()).length(4),
       }),

@@ -143,6 +143,53 @@ async function storeMessage(
     .run();
 }
 
+// New function to process user messages
+async function processUserMessage(
+  chatId: number,
+  userId: number,
+  text: string,
+  env: Env,
+  ctx: ExecutionContext
+) {
+  try {
+    const sessionId = await getActiveSession(chatId, userId, env);
+    let history = await getChatHistory(sessionId, env);
+
+    // Store the current user's message BEFORE the API call
+    await storeMessage(sessionId, chatId, userId, "user", text, env);
+
+    // For the API call, `history` for startChat should be prior messages.
+    // The `text` (current user message) will be sent via chat.sendMessage()
+
+    const genAI = new GoogleGenerativeAI(env.GEMINI_API_KEY);
+    const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash" });
+
+    const chat = model.startChat({
+      history: history.map((msg) => ({
+        // Use prior history here
+        role: msg.role,
+        parts: [{ text: msg.content }],
+      })),
+      generationConfig: {
+        maxOutputTokens: 150,
+      },
+    });
+
+    const result = await chat.sendMessage(text); // Send the current user's message
+    const responseText = result.response.text();
+
+    await storeMessage(sessionId, chatId, userId, "model", responseText, env);
+    await sendTelegramMessage(chatId, responseText, env, 0, ctx);
+  } catch (error) {
+    console.error("Error in processUserMessage:", error);
+    let errorMessage = "Sorry, I encountered an error processing your message.";
+    if (error instanceof Error) {
+      errorMessage += ` Details: ${error.message}`;
+    }
+    await sendTelegramMessage(chatId, errorMessage, env, 0, ctx);
+  }
+}
+
 // Handle Telegram webhook updates
 async function handleTelegramUpdate(
   update: TelegramUpdate,
@@ -162,11 +209,12 @@ async function handleTelegramUpdate(
       chatId,
       `Welcome! I'm your AI asap chat bot. Here are the available commands:
 
+/ask <your question> - Ask me anything! (especially useful in groups)
 /new - Start a new chat session
 /history - Show current chat history
 /help - Show this help message
 
-Simply send any message to chat with me!`,
+Simply send any message to chat with me directly (in DMs)!`,
       env,
       0,
       ctx
@@ -180,11 +228,12 @@ Simply send any message to chat with me!`,
       chatId,
       `Available commands:
 
+/ask <your question> - Ask me anything! (especially useful in groups)
 /new - Start a new chat session
 /history - Show current chat history
 /help - Show this help message
 
-Each chat session maintains its own history, allowing for contextual conversations.`,
+Each chat session maintains its own history, allowing for contextual conversations. In DMs, you can also just send me a message directly without a command.`,
       env,
       0,
       ctx
@@ -213,7 +262,7 @@ Each chat session maintains its own history, allowing for contextual conversatio
     if (history.length === 0) {
       await sendTelegramMessage(
         chatId,
-        "No chat history in current session.",
+        "No chat history in current session. Start chatting or use /ask <your question>!",
         env,
         0,
         ctx
@@ -222,12 +271,17 @@ Each chat session maintains its own history, allowing for contextual conversatio
     }
 
     const historyText = history
-      .map((msg) => `*${msg.role}*: ${msg.content}`)
-      .join("\n\n");
+      .map(
+        (msg) =>
+          `*${msg.role.charAt(0).toUpperCase() + msg.role.slice(1)}*: ${
+            msg.content
+          }`
+      ) // Capitalize role
+      .join("\n\n---\n\n"); // Improved formatting
 
     await sendTelegramMessage(
       chatId,
-      `Current Chat History:\n\n${historyText}`,
+      `📝 *Current Chat History*: (Session ID: ${sessionId})\n\n${historyText}`,
       env,
       0,
       ctx
@@ -235,45 +289,46 @@ Each chat session maintains its own history, allowing for contextual conversatio
     return;
   }
 
-  try {
-    const sessionId = await getActiveSession(chatId, userId, env);
-    const history = await getChatHistory(sessionId, env);
+  // Handle /ask command
+  if (text.startsWith("/ask ")) {
+    const question = text.substring(5).trim();
+    if (question) {
+      await processUserMessage(chatId, userId, question, env, ctx);
+    } else {
+      await sendTelegramMessage(
+        chatId,
+        "Please provide a question after /ask. Example: `/ask What is the capital of France?`",
+        env,
+        0,
+        ctx
+      );
+    }
+    return;
+  }
 
-    await storeMessage(sessionId, chatId, userId, "user", text, env);
+  // If no command is matched, treat as a direct message to the AI
+  // This is the part that needs to be careful in group chats.
+  // For now, let's assume if it's not a command, it's a direct query.
+  // We might need to check if the bot was mentioned in a group later.
+  if (!text.startsWith("/")) {
+    await processUserMessage(chatId, userId, text, env, ctx);
+    return;
+  }
 
-    const genAI = new GoogleGenerativeAI(env.GEMINI_API_KEY);
-    const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash" });
-
-    const chat = model.startChat({
-      history: history.map((msg) => ({
-        role: msg.role,
-        parts: [{ text: msg.content }],
-      })),
-      generationConfig: {
-        maxOutputTokens: 100, // Limit response length
-      },
-    });
-
-    const systemPrompt =
-      "You are a helpful AI assistant. Keep responses brief and concise unless specifically asked for detailed explanations.";
-    await chat.sendMessage(systemPrompt);
-
-    const result = await chat.sendMessage(text);
-    const response = result.response.text();
-
-    await storeMessage(sessionId, chatId, userId, "model", response, env);
-
-    await sendTelegramMessage(chatId, response, env, 0, ctx);
-  } catch (error) {
-    console.error(error);
+  // If no known command is matched and it starts with /, send a default message.
+  if (text.startsWith("/")) {
     await sendTelegramMessage(
       chatId,
-      "Sorry, I encountered an error processing your message.",
+      "Sorry, I didn't understand that command. Try /help for a list of commands.",
       env,
-      0,
+      5000, // Delete after 5 seconds
       ctx
     );
+    return;
   }
+
+  // Fallback for any other messages - though the above conditions should cover most.
+  // The try-catch block for AI processing has been moved to processUserMessage
 }
 
 // Router setup

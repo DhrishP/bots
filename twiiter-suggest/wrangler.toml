@@ -5,6 +5,16 @@ compatibility_date = "2024-03-01"
 # Use the newer nodejs_compat flag for better Node.js compatibility
 compatibility_flags = ["nodejs_compat"]
 
+# wrangler.toml (wrangler v3.88.0^)
+[observability.logs]
+enabled = true
+
+
+
+
+
+
+
 
 
 

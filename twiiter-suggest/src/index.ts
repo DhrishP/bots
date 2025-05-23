@@ -1,11 +1,10 @@
-import { google } from "@ai-sdk/google";
+import { createGoogleGenerativeAI } from "@ai-sdk/google";
 import { generateObject } from "ai";
 import { z } from "zod";
 import { Router } from "itty-router";
 import { GoogleGenerativeAI } from "@google/generative-ai";
 
 interface Env {
-  DB: D1Database;
   TELEGRAM_BOT_TOKEN: string;
   GEMINI_API_KEY: string;
 }
@@ -46,19 +45,26 @@ async function sendTelegramMessage(
 }
 
 // Generate suggestions using Vercel AI SDK (no types)
-async function generateSuggestions(prompt: string, env: Env) {
+async function generateSuggestions(prompt: string, env: Env, chatId: number, ctx: ExecutionContext) {
   try {
+    console.log(env.GEMINI_API_KEY, "key");
+    const google = createGoogleGenerativeAI({
+      apiKey: env.GEMINI_API_KEY,
+    });
     const { object } = await generateObject({
-      model: google("gemini-1.5-flash"),
+      model: google("gemini-2.0-flash-001"),
       schema: z.object({
         suggestions: z.array(z.string()).length(4),
       }),
       prompt: prompt,
     });
+    console.log(object);
     // Ensure it returns an array even if generation fails partially
     return Array.isArray(object?.suggestions) ? object.suggestions : [];
-  } catch (error) {
+  } catch (error:any) {
+    console.log(error);
     console.error("Error generating suggestions:", error);
+    sendTelegramMessage(chatId, error?.message, env, ctx);
     return ["Sorry, I couldn't generate suggestions right now."];
   }
 }
@@ -79,10 +85,10 @@ async function handlePostCommand(
     );
     return;
   }
-
+  console.log(env, "env");
   const prompt = `Generate 4 concise Twitter post suggestions based on this topic: "${text}"`;
-  const suggestions = await generateSuggestions(prompt, env);
-
+  const suggestions = await generateSuggestions(prompt, env ,chatId, ctx);
+  console.log("here");
   if (suggestions.length > 0) {
     await sendTelegramMessage(
       chatId,
@@ -90,6 +96,7 @@ async function handlePostCommand(
       env,
       ctx
     );
+    console.log(suggestions);
     for (const suggestion of suggestions) {
       await sendTelegramMessage(chatId, suggestion, env, ctx);
       // Optional delay
@@ -124,7 +131,7 @@ async function handleRepliesCommand(
   }
 
   const prompt = `Generate 4 concise Twitter reply suggestions for this tweet: "${text}"`;
-  const suggestions = await generateSuggestions(prompt, env);
+  const suggestions = await generateSuggestions(prompt, env, chatId, ctx);
 
   if (
     suggestions.length > 0 &&
@@ -136,6 +143,7 @@ async function handleRepliesCommand(
       env,
       ctx
     );
+    console.log(suggestions);
     for (const suggestion of suggestions) {
       await sendTelegramMessage(chatId, suggestion, env, ctx);
       // Optional delay
@@ -164,6 +172,7 @@ async function handleTelegramUpdate(
     console.log("Ignoring update with missing data:", update);
     return;
   }
+  console.log(message, "message");
 
   const chatId = message.chat.id;
   const userId = message.from.id;
@@ -186,8 +195,10 @@ async function handleTelegramUpdate(
 
   try {
     if (command === "post") {
+      console.log("here2");
       await handlePostCommand(chatId, text, env, ctx);
     } else if (command === "replies") {
+      console.log("here3");
       await handleRepliesCommand(chatId, text, env, ctx);
     } else {
       await sendTelegramMessage(
@@ -230,16 +241,60 @@ export default {
     env: Env,
     ctx: ExecutionContext
   ): Promise<Response> {
+    // Log entry point
+    console.log(
+      `[${new Date().toISOString()}] Received request: ${request.method} ${
+        request.url
+      }`
+    );
+    console.log("[FETCH HANDLER] Request received.");
+
+    // Handle POST requests directly (like ai-asap)
     if (request.method === "POST") {
+      let update: TelegramUpdate | null = null;
       try {
-        const update = (await request.json()) as TelegramUpdate;
+        console.log("[FETCH HANDLER] Attempting to parse JSON body...");
+        update = (await request.json()) as TelegramUpdate;
+        console.log("[FETCH HANDLER] JSON body parsed successfully:", update);
         await handleTelegramUpdate(update, env, ctx);
         return new Response("OK", { status: 200 });
       } catch (e) {
-        console.error("Error processing request", e);
-        return new Response("Error processing request", { status: 500 });
+        console.error("[FETCH HANDLER] Error processing POST request:", e);
+        try {
+          const rawBody = await request.text();
+          console.error(
+            "[FETCH HANDLER] Raw request body (potential parsing issue):",
+            rawBody.substring(0, 500)
+          );
+        } catch (bodyError) {
+          console.error(
+            "[FETCH HANDLER] Could not read request body text:",
+            bodyError
+          );
+        }
+
+        const errorMessage =
+          e instanceof Error
+            ? e.message
+            : "An unknown error occurred during POST processing";
+        return new Response(`Error processing request: ${errorMessage}`, {
+          status: 500,
+        });
       }
     }
-    return router.handle(request, env, ctx);
+
+    // Delegate non-POST requests (e.g., GET /) to the router
+    try {
+      return await router.handle(request, env, ctx);
+    } catch (error) {
+      console.error("Router or handler error (non-POST):", error);
+      const errorMessage =
+        error instanceof Error
+          ? error.message
+          : "An unknown error occurred via router";
+      return new Response(`Internal Server Error: ${errorMessage}`, {
+        status: 500,
+      });
+    }
   },
 };

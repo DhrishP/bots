@@ -273,8 +273,7 @@ async function handleTelegramUpdate(update: TelegramUpdate, env: Env) {
     const parts = text.split(' ');
     const command = parts[0];
     if (command.includes('@')) {
-      parts[0] = command.split('@')[0];
-      text = parts.join(' ');
+      text = command.split('@')[0];
     }
   }
 

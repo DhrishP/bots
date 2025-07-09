@@ -182,8 +182,7 @@ async function handleTelegramUpdate(
     const parts = fullText.split(' ');
     const command = parts[0];
     if (command.includes('@')) {
-      parts[0] = command.split('@')[0];
-      fullText = parts.join(' ');
+      fullText = command.split('@')[0];
     }
   }
 

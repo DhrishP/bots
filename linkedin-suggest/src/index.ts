@@ -198,7 +198,16 @@ async function handleTelegramUpdate(
 
   const chatId = message.chat.id;
   // const userId = message.from.id; // Keep if needed later
-  const fullText = message.text.trim();
+  let fullText = message.text.trim();
+
+  if (fullText.startsWith('/')) {
+    const parts = fullText.split(' ');
+    const command = parts[0];
+    if (command.includes('@')) {
+      parts[0] = command.split('@')[0];
+      fullText = parts.join(' ');
+    }
+  }
 
   // Simple command parsing
   const commandMatch = fullText.match(/^\/(\w+)(?:\s+(.*))?$/s); // Added 's' flag for multiline text

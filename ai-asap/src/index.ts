@@ -201,7 +201,16 @@ async function handleTelegramUpdate(
 
   const chatId = message.chat.id;
   const userId = message.from.id;
-  const text = message.text.trim();
+  let text = message.text.trim();
+
+  if (text.startsWith('/')) {
+    const parts = text.split(' ');
+    const command = parts[0];
+    if (command.includes('@')) {
+      parts[0] = command.split('@')[0];
+      text = parts.join(' ');
+    }
+  }
 
   // Handle /start command
   if (text === "/start") {

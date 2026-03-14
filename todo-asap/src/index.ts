@@ -236,6 +236,35 @@ async function deleteMessage(chatId: number, messageId: number, env: Env) {
   );
 }
 
+// Helper function to send long messages that might exceed Telegram's 4096 char limit
+async function sendLongTelegramMessage(
+  chatId: number,
+  title: string,
+  items: string[],
+  env: Env,
+  deleteAfter: number = 0,
+  ctx: ExecutionContext
+) {
+  let currentChunk = title + "\n";
+  const chunks: string[] = [];
+
+  for (const item of items) {
+    if (currentChunk.length + item.length + 1 > 3800) {
+      chunks.push(currentChunk);
+      currentChunk = item + "\n";
+    } else {
+      currentChunk += item + "\n";
+    }
+  }
+  if (currentChunk.trim() !== "") {
+    chunks.push(currentChunk);
+  }
+
+  for (const chunk of chunks) {
+    await sendTelegramMessage(chatId, chunk, env, deleteAfter, ctx, "Markdown", true);
+  }
+}
+
 // Helper function for reordering tasks
 async function reorderTasks(chatId: string, userId: number, env: Env) {
   await env.DB.prepare(
@@ -443,13 +472,14 @@ async function handleTelegramUpdate(
           return `${todo.task_order}. ${formattedTask}`;
         });
         
-        const taskList = (await Promise.all(taskListPromises)).join("\n");
+        const taskItems = await Promise.all(taskListPromises);
 
-        await sendTelegramMessage(
+        await sendLongTelegramMessage(
           chatId,
-          `📋 Your tasks:\n${taskList}`,
+          "📋 Your tasks:",
+          taskItems,
           env,
-          60000, // 1 min for list
+          60000,
           ctx
         );
       }
@@ -490,13 +520,14 @@ async function handleTelegramUpdate(
         return `• ${formattedTask}`;
       });
       
-      const winsList = (await Promise.all(winsListPromises)).join("\n");
+      const winsItems = await Promise.all(winsListPromises);
 
-      await sendTelegramMessage(
+      await sendLongTelegramMessage(
         chatId,
-        `🎉 Your completed tasks:\n${winsList}`,
+        "🎉 Your completed tasks:",
+        winsItems,
         env,
-        60000, // 1 min for list
+        60000,
         ctx
       );
       return;
@@ -541,13 +572,14 @@ async function handleTelegramUpdate(
         return `${todo.task_order}. ${formattedTask}`;
       });
       
-      const taskList = (await Promise.all(taskListPromises)).join("\n");
+      const taskItems = await Promise.all(taskListPromises);
 
-      await sendTelegramMessage(
+      await sendLongTelegramMessage(
         chatId,
-        `📋 Your tasks:\n${taskList}`,
+        "📋 Your tasks:",
+        taskItems,
         env,
-        60000, // 1 min for list
+        60000,
         ctx
       );
       return;
@@ -626,13 +658,14 @@ async function handleTelegramUpdate(
           return `${todo.task_order}. ${formattedTask}`;
         });
         
-        const taskList = (await Promise.all(taskListPromises)).join("\n");
+        const taskItems = await Promise.all(taskListPromises);
 
-        await sendTelegramMessage(
+        await sendLongTelegramMessage(
           chatId,
-          `📋 Your tasks:\n${taskList}`,
+          "📋 Your tasks:",
+          taskItems,
           env,
-          60000, // 1 min for list
+          60000,
           ctx
         );
       } else {
